@@ -30,6 +30,14 @@ export VULTR_API_KEY='<paste-key-from-vultr-panel>'
 # (Root + password auth are disabled in cloud-init.)
 export AEGIS_SSH_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)"
 
+# Required (Phase 3): AI Studio key for the Gemini-3.1-PRO judge that
+# runs inside the aegis-ui container. The provisioner aborts BEFORE
+# the Vultr API call if this is unset, because the live URL would
+# otherwise serve a judge that always fails open. The key is written
+# to /opt/apohara-aegis/deploy/.env on the droplet (chmod 0600, root)
+# at first boot; it never lives in any repo file.
+export GEMINI_API_KEY='<your-AI-Studio-key>'
+
 # Optional: judge basicauth credentials. Defaults to
 # user=judge / password=apohara-aegis-techex-2026 if unset.
 # export AEGIS_JUDGE_USER='judge'

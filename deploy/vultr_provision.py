@@ -132,20 +132,38 @@ def find_instance_by_tag(api_key: str, tag: str) -> Optional[dict]:
     return None
 
 
+def _mask(secret: str) -> str:
+    """Return a redacted preview of a secret for logging (first 4 + last 4)."""
+    if not secret:
+        return "<empty>"
+    if len(secret) <= 8:
+        return "*" * len(secret)
+    return f"{secret[:4]}...{secret[-4:]} ({len(secret)} chars)"
+
+
 def load_user_data() -> str:
     """Read deploy/cloud-init.yaml and substitute operator env vars.
 
-    Performs three placeholder substitutions on the raw YAML before
+    Performs four placeholder substitutions on the raw YAML before
     returning it:
 
     1. ``AEGIS_SSH_PUBKEY_PLACEHOLDER``      -> $AEGIS_SSH_PUBKEY (required).
     2. ``AEGIS_JUDGE_USER_PLACEHOLDER``      -> $AEGIS_JUDGE_USER (optional, default empty).
     3. ``AEGIS_JUDGE_PASS_HASH_PLACEHOLDER`` -> $AEGIS_JUDGE_PASS_HASH (optional, default empty).
+    4. ``GEMINI_API_KEY_PLACEHOLDER``        -> $GEMINI_API_KEY (required, Phase 3).
 
-    Honesty contract: the SSH pubkey is hard-required. If
-    ``AEGIS_SSH_PUBKEY`` is unset the function raises with an actionable
-    error message BEFORE the caller hits the Vultr API — there is no
-    silent fallback to root + password auth.
+    Honesty contract: the SSH pubkey AND the Gemini API key are
+    hard-required. If either is unset the function raises with an
+    actionable error message BEFORE the caller hits the Vultr API —
+    there is no silent fallback to root + password auth, and there is
+    no silent fallback to a judge container with no AI Studio
+    credentials (the live demo URL would otherwise serve a broken
+    judge that always returns ``path="unavailable"`` and silently
+    bypasses Gemini, defeating the whole Phase-3 stack).
+
+    Neither secret is ever written to a file on the operator's host
+    by this function. The substituted YAML is held in memory only and
+    fed to ``base64.b64encode`` for the Vultr ``user_data`` POST body.
     """
     path = Path(__file__).resolve().parent / "cloud-init.yaml"
     if not path.exists():
@@ -168,6 +186,22 @@ def load_user_data() -> str:
             "Then re-run this script."
         )
 
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not gemini_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY env var is not set. Phase-3 deployment "
+            "requires a real AI Studio key — the aegis-ui container "
+            "needs it to call the Gemini-3.1-PRO judge in "
+            "apohara_aegis/gemini_judge.py. Without a key the judge "
+            "returns path='unavailable' and silently bypasses the "
+            "Phase-2 calibration, defeating the live defense stack.\n"
+            "Fix:\n"
+            "    export GEMINI_API_KEY='<your-AI-Studio-key>'\n"
+            "Then re-run this script."
+        )
+    # Honesty log: key length + first/last 4 only, never the value.
+    print(f"  gemini : {_mask(gemini_key)}", file=sys.stderr)
+
     raw = raw.replace("AEGIS_SSH_PUBKEY_PLACEHOLDER", pubkey)
     raw = raw.replace(
         "AEGIS_JUDGE_USER_PLACEHOLDER",
@@ -177,6 +211,7 @@ def load_user_data() -> str:
         "AEGIS_JUDGE_PASS_HASH_PLACEHOLDER",
         os.environ.get("AEGIS_JUDGE_PASS_HASH", "").strip(),
     )
+    raw = raw.replace("GEMINI_API_KEY_PLACEHOLDER", gemini_key)
     return raw
 
 

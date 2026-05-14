@@ -154,6 +154,20 @@ services:
       HOME: "/tmp/aegis-home"
       PYTHONUSERBASE: "/tmp/aegis-pip"
       PATH: "/tmp/aegis-pip/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      # Phase-3 judge stack (2026-05-14): pull the Gemini key from the
+      # host-level .env file written by cloud-init. Both var names are
+      # set so the google-generativeai SDK picks it up regardless of
+      # which env var it prefers (GEMINI_API_KEY is the canonical one,
+      # GOOGLE_API_KEY is the historical alias). Lobster Trap deliberately
+      # does NOT see this key — only the Aegis judge in aegis-ui calls
+      # AI Studio.
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GOOGLE_API_KEY: "${GEMINI_API_KEY:-}"
+      # Calibrated threshold from logs/jbb_defense_full_20260514T195225Z.json
+      # (commit 6636f8e). Module-level default in apohara_aegis/gemini_judge.py
+      # is also 0.5; we set it explicitly so operators see the value in
+      # `docker inspect aegis-ui` without having to read the source.
+      CALIBRATED_JUDGE_THRESHOLD: "0.5"
     tmpfs:
       # User home + pip --user prefix. Ephemeral; recreated each restart.
       - /tmp/aegis-home:uid=65532,gid=65532,mode=0700

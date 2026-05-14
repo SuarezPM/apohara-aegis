@@ -116,11 +116,25 @@ write_files:
       # YAML is shipped to cloud-init. Defaults are intentionally
       # left empty here so Caddy falls back to the baked-in defaults
       # in deploy/Caddyfile when an operator forgot to set them.
+      #
+      # Phase-3 (2026-05-14): GEMINI_API_KEY is substituted in the same way
+      # by vultr_provision.py from the operator's env at provision time —
+      # the literal value never lives in this YAML on disk, only in the
+      # base64-encoded user_data blob shipped to Vultr. The aegis-ui
+      # container reads it from this .env via docker-compose's variable
+      # substitution. Lobster Trap deliberately does NOT see this key.
       cat >/opt/apohara-aegis/deploy/.env <<EOF
       AEGIS_SITE=${PUBLIC_IP}.nip.io
       AEGIS_JUDGE_USER=AEGIS_JUDGE_USER_PLACEHOLDER
       AEGIS_JUDGE_PASS_HASH=AEGIS_JUDGE_PASS_HASH_PLACEHOLDER
+      GEMINI_API_KEY=GEMINI_API_KEY_PLACEHOLDER
       EOF
+      # Tighten perms: only root + the docker daemon's compose reader
+      # should see this file. The aegis user (in the docker group) reads
+      # it indirectly via `docker compose up`. 0600 owned by root keeps
+      # the key off the box's `aegis` shell history / world-readable paths.
+      chown root:root /opt/apohara-aegis/deploy/.env
+      chmod 0600 /opt/apohara-aegis/deploy/.env
 
       # ----- 4. Firewall (UFW): only 22, 80, 443 inbound ---------------------
       echo "[4/5] Configuring UFW..."
