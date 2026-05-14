@@ -328,11 +328,40 @@ def _intent_for_role(apohara_role: str) -> str:
 
 
 # Default model when caller passes a generic "gemini" name without a
-# version suffix. As of 2026-05-14 this is the free-tier-eligible
-# checkpoint on Google AI Studio (gemini-1.5-* deprecated; gemini-2.0-flash
-# requires paid quota on a fresh key). If Google shifts free-tier
-# eligibility again, update this constant — verified live on 2026-05-14.
-GEMINI_DEFAULT_MODEL = "gemini-2.5-flash-lite"
+# version suffix. As of 2026-05-14 PM this is ``gemini-3.1-pro-preview``,
+# the current SOTA flagship on Google AI Studio.
+#
+# Migration history (2026-05-14):
+#   - morning: ``gemini-2.5-flash-lite`` (free-tier on a fresh AIza key),
+#     shipped by Innovation G in commit ``e9f112e``.
+#   - afternoon: bumped to ``gemini-3.1-pro-preview`` after the user's
+#     $15 USD AI Studio prepayment top-up on a rotated AIza key. The
+#     ``-preview`` suffix is mandatory — Google has NOT released the
+#     non-preview alias yet; ``gemini-3.1-pro`` returns 404 on the
+#     ``generativelanguage.googleapis.com`` endpoint as of 2026-05-14.
+#
+# Diagnostic path (see AUDIT.md entry #9 for the full story): a parallel
+# attempt to reach ``gemini-3.1-pro-preview`` via Vertex AI on the
+# proper project ``gen-lang-client-0658922897`` (Service Account with
+# billing linked, $300 GCP credit attached) returned ``404 NOT_FOUND``
+# across **every** region tried (us-central1, us-east5, us-east1,
+# europe-west4, global) for **every** ``gemini-3.x`` variant. Vertex AI
+# only exposes ``gemini-2.5-pro`` for the 3.x-pretender slot today. So
+# the 3.1 path is AI Studio-only, billed against AI Studio prepayment,
+# not the GCP credit.
+#
+# Architectural fallback (Phase 2, NOT this commit): a circuit-breaker
+# will live in ``apohara_aegis/gemini_judge.py`` that routes to Vertex
+# AI + ``gemini-2.5-pro`` if AI Studio hard-quotas during a demo. That
+# path uses the SA JSON at ``$APOHARA_AEGIS_VERTEX_SA_PATH`` (outside
+# the repo). Until that module lands, this constant is the single
+# source of truth for cross-vendor critic model selection.
+#
+# If ``GEMINI_API_KEY`` is missing entirely, ``call_gemini`` returns
+# ``None`` and the caller falls back to vLLM — the free-tier
+# ``gemini-2.5-flash-lite`` path is no longer the default but is still
+# available via explicit ``model_name="gemini-2.5-flash-lite"``.
+GEMINI_DEFAULT_MODEL = "gemini-3.1-pro-preview"
 
 
 def call_gemini(
