@@ -13,8 +13,12 @@ pytest>=8.0,<10
 gradio>=6.0,<7
 datasets>=4.0,<5   # JailbreakBench dataset loader
 
-# Cover image generator (PIL)
-pillow>=10.0,<12
+# Cover image generator (PIL). Bumped 2026-05-14 from ``pillow>=10.0,<12``
+# to clear 6 CVEs flagged by ``pip-audit`` against 11.3.0 (CVE-2026-25990
+# and five companions). 12.2.0 has wheels for Python 3.11 - 3.14 on
+# linux/macos/win — verified locally on the 3.14.4 dev box.
+# Security-review supply-chain note (Phase-4 review).
+pillow>=12.2,<13
 
 # Real Gemini SDK (optional path; honest fallback if GEMINI_API_KEY not set).
 # Migrated 2026-05-14 from the deprecated `google-generativeai` (legacy
