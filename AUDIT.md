@@ -82,6 +82,38 @@ This repo (**Apohara Aegis**) is the **applied policy stack** that wraps two ope
 
 ---
 
+## 5. 🟡 INV-15 scorer vendored locally — constants mirror, not import
+
+**Where it lives**: `apohara_aegis/inv15_gate.py`.
+
+**The state on 2026-05-14**: Innovation E (smolagents wrapper) needs the closed-form INV-15 risk score to gate critic-role tool calls. Rather than take a hard PyPI dependency on `apohara_context_forge` (which transitively pulls PyTorch + vLLM + ROCm bindings for what is, mathematically, twelve lines of arithmetic), we **vendored the four risk constants** (`_BASE_RISK_JUDGE=0.6`, `_BASE_RISK_OTHER=0.1`, `_RISK_PER_EXTRA_CANDIDATE=0.10`, `_RISK_LAYOUT_SHUFFLED=0.20`, `_RISK_HIGH_REUSE=0.15`, `_HIGH_REUSE_THRESHOLD=0.8`) from the upstream `apohara_context_forge/safety/jcr_gate.py`.
+
+**Why this matters**: the numbers must not drift from upstream. If arXiv:2601.08343 publishes revised coefficients, both files must update together.
+
+**Discipline going forward**: when bumping the constants in either repo, update both files in the same release cycle and add a one-line note here referencing the new commit / paper revision.
+
+**Default tau**: Aegis uses `DEFAULT_TAU=0.65` (vs upstream `DEFAULT_JCR_THRESHOLD=0.7`). The lower threshold is intentional for the wrapper context — smolagents users running Aegis are explicitly asking for stricter gating than the upstream engine's library default. Documented in `inv15_gate.py`.
+
+**Rating**: 🟡 HONEST STUB / 🟢 PRODUCTION boundary. The implementation is real and tested; the value-add caveat is that drift between repos is a maintenance hazard we openly acknowledge.
+
+---
+
+## 6. 🟢 smolagents wrapper — callback live-verified (not mock-only)
+
+**Where it lives**: `apohara_aegis/smolagents_integration.py`, `tests/test_aegis_smolagents.py`, `examples/aegis_smolagents_demo.py`.
+
+**Claim**: `AegisGuard.wrap(agent)` installs an `ActionStep` step-callback that blocks judge-role steps when the INV-15 risk score exceeds `tau`.
+
+**Evidence**: `tests/test_aegis_smolagents.py::test_aegis_blocks_critic_under_high_reuse` builds a real `CodeAgent` (smolagents 1.25.0) with a stub model that emits `final_answer("ok")`, then runs `agent.run(...)` and walks the exception chain looking for `AegisBlocked`. Test PASSES (verified 2026-05-14). The demo (`examples/aegis_smolagents_demo.py`) reproduces the same allow-then-block pattern end-to-end with no network calls.
+
+**Limitation (HONEST)**: smolagents 1.25.0 invokes `step_callbacks` *after* the LLM has produced a code block but the surrounding harness still runs the parsed code's `final_answer(...)` step for the *current* turn before our raise propagates. For multi-step agents, the callback aborts subsequent turns, which is the intended INV-15 enforcement. For single-step `final_answer` flows, the answer string can already have been emitted before `AegisBlocked` is raised. This is faithful to "behavioral defense in depth" (LT perimeter is the other layer) but a user expecting *pre-execution* veto of every tool call should wrap their tools individually (see `tools` param on `CodeAgent`). Documented in source comment.
+
+**Lobster Trap perimeter routing**: in smolagents 1.25.0, `OpenAIModel` does not expose `api_base` as a public attribute; the live URL lives on `model.client.base_url` (httpx) and `model.client_kwargs["base_url"]`. We patch both, plus set `model.api_base` as a convenience alias. Tested at `tests/test_aegis_smolagents.py::test_aegis_lt_endpoint_routing`.
+
+**Rating**: 🟢 PRODUCTION. All six tests pass; demo runs end-to-end; limitations are documented in source comments and here.
+
+---
+
 ## Maintenance discipline (going forward)
 
 1. **No new mechanism enters the README without an entry in this file** declaring its state (🟢/🟡/🟠/🔴).

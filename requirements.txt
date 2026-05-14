@@ -26,3 +26,7 @@ google-generativeai>=0.8,<1
 #   Forge (github.com/SuarezPM/Apohara_Context_Forge,
 #   Zenodo DOI 10.5281/zenodo.20114594). This repo is the applied policy
 #   layer that wraps that engine.
+# - smolagents (HuggingFace) is an OPTIONAL extra for Innovation E:
+#       pip install 'apohara-aegis[smolagents]'
+#   It is not pinned here because Aegis can be used standalone as an
+#   INV-15 scorer + Lobster Trap policy loader without smolagents.

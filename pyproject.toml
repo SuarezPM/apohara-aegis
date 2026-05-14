@@ -28,5 +28,10 @@ Homepage = "https://github.com/SuarezPM/apohara-aegis"
 "Paper (Zenodo DOI)" = "https://doi.org/10.5281/zenodo.20114594"
 "Lobster Trap (Veea)" = "https://github.com/veeainc/lobstertrap"
 
+[project.optional-dependencies]
+# HuggingFace smolagents integration (Innovation E). Optional because
+# Aegis can also be used standalone as an INV-15 scorer + policy loader.
+smolagents = ["smolagents>=1.0,<2"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
