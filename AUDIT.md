@@ -1,4 +1,4 @@
-# apohara-aegis — Honesty Log
+# Apohara Aegis — Honesty Log
 
 > **Status:** living document, maintained alongside the codebase.
 > **Discipline:** every claim in the README, docs, slides, and submission text traces to either an executable check or a published artifact. No claim without a backing file. When external audits catch a gap, we acknowledge the gap openly (here) and fix the code.
@@ -70,7 +70,7 @@ When run without `--audit-log` / `--inv15-log` args (or when those paths don't e
 
 ## 4. 🟢 Upstream provenance — clear separation of contributions
 
-This repo (`apohara-aegis`) is the **applied policy stack** that wraps two open-source components:
+This repo (**Apohara Aegis**) is the **applied policy stack** that wraps two open-source components:
 - The [Veea Lobster Trap](https://github.com/veeainc/lobstertrap) proxy (MIT, independently authored by Veea Inc).
 - The [Apohara Context Forge](https://github.com/SuarezPM/Apohara_Context_Forge) INV-15 invariant + MI300X-validated codec (Apache-2.0, authored by the same maintainer of this repo).
 

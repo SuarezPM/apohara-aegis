@@ -51,7 +51,7 @@ def render() -> Image.Image:
 
     # Project name — top-left
     title_font = load_font(FONT_BOLD, 64)
-    draw.text((48, 56), "apohara-aegis", font=title_font, fill=COLOR_TEXT)
+    draw.text((48, 56), "Apohara Aegis", font=title_font, fill=COLOR_TEXT)
 
     # Subtitle — below title
     subtitle_font = load_font(FONT_REGULAR, 28)

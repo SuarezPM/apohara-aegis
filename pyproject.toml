@@ -1,7 +1,7 @@
 [project]
 name = "apohara-aegis"
 version = "0.1.0"
-description = "Defense-in-depth trust layer for multi-agent LLM workflows — Veea Lobster Trap (perimeter) + Apohara INV-15 (behavioral)."
+description = "Apohara Aegis — defense-in-depth trust layer for multi-agent LLM workflows. Veea Lobster Trap (perimeter) + Apohara INV-15 (behavioral)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 authors = [

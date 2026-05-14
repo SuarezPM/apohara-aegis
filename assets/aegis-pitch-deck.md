@@ -6,7 +6,7 @@ size: 16:9
 backgroundColor: #0f172a
 color: #f8fafc
 header: 'TechEx 2026 · Track 1 · Agent Security & AI Governance'
-footer: 'apohara-aegis · github.com/SuarezPM/apohara-aegis · Apache-2.0'
+footer: 'Apohara Aegis · github.com/SuarezPM/apohara-aegis · Apache-2.0'
 style: |
   section { font-family: 'DejaVu Sans', sans-serif; background-color: #0f172a; color: #f8fafc; }
   h1 { color: #ef4444; font-size: 1.7em; }
@@ -26,7 +26,7 @@ style: |
 
 <!-- _class: lead -->
 
-# apohara-aegis
+# Apohara Aegis
 
 ## Defense-in-Depth Trust Layer for Multi-Agent LLMs
 
