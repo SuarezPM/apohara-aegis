@@ -1,0 +1,6 @@
+# apohara-aegis: small asset files (<200KB each), no LFS needed
+# Force text mode for code files
+*.py text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf

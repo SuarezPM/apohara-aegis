@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.venv/
+.env
+
+# Ephemeral JBB defense reports (regenerable per run)
+logs/jbb_defense_report_*.json
+
+# OS
+.DS_Store
+Thumbs.db
