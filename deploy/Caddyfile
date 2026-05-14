@@ -1,0 +1,67 @@
+# Apohara Aegis — Caddy reverse proxy config for the public TechEx demo.
+#
+# {$AEGIS_SITE} is substituted by Caddy from the AEGIS_SITE env var (set
+# by cloud-init to "<publicIP>.nip.io"). Using nip.io wildcard DNS lets
+# Let's Encrypt issue a real TLS cert without any DNS configuration.
+
+{
+    # Operator contact for ACME — keeps Let's Encrypt happy.
+    email p.ms.08@hotmail.com
+    # Reduce log verbosity; demo droplet has 2 GB RAM.
+    log {
+        output stdout
+        level INFO
+    }
+}
+
+{$AEGIS_SITE} {
+
+    # ---- /audit -> static governance dashboard HTML --------------------
+    # /srv/audit is the repo's assets/ directory mounted read-only into
+    # caddy by docker-compose. The file is inv15-governance-dashboard.html.
+    handle /audit {
+        root * /srv/audit
+        rewrite * /inv15-governance-dashboard.html
+        file_server
+    }
+    handle /audit/* {
+        root * /srv/audit
+        rewrite * /inv15-governance-dashboard.html
+        file_server
+    }
+
+    # ---- /lt/* -> Lobster Trap proxy on :8080 ---------------------------
+    # We strip the /lt prefix so the upstream sees /v1/chat/completions
+    # at its root. Useful for judges who want to hit the proxy directly
+    # with curl via the public URL.
+    handle_path /lt/* {
+        reverse_proxy lobstertrap:8080
+    }
+
+    # ---- / -> Gradio aegis-ui ------------------------------------------
+    # Gradio uses websockets and event streams; the headers below are
+    # required for the UI's real-time progress updates to work behind a
+    # reverse proxy.
+    handle {
+        reverse_proxy aegis-ui:7860 {
+            header_up Host {host}
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            # Allow large polling timeouts for Gradio's queue.
+            transport http {
+                read_timeout 600s
+                response_header_timeout 600s
+            }
+        }
+    }
+
+    # Compression for the dashboard HTML.
+    encode gzip zstd
+
+    # Per-request access log (stdout -> docker logs).
+    log {
+        output stdout
+        format console
+    }
+}

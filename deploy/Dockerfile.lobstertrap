@@ -1,0 +1,21 @@
+# Multi-stage build for Lobster Trap (Veea, MIT, Go).
+# Upstream: https://github.com/veeainc/lobstertrap
+#
+# We don't fork; we clone HEAD of upstream at build time. The image is
+# rebuilt on each `docker compose up --build`, so the demo always tracks
+# the published version.
+
+FROM golang:1.22-bookworm AS build
+ARG LT_REPO=https://github.com/veeainc/lobstertrap
+ARG LT_REF=main
+WORKDIR /src
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN git clone --depth=1 --branch "${LT_REF}" "${LT_REPO}" .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/lobstertrap ./cmd/lobstertrap 2>/dev/null \
+ || CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/lobstertrap .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/lobstertrap /usr/local/bin/lobstertrap
+USER nonroot:nonroot
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/lobstertrap"]

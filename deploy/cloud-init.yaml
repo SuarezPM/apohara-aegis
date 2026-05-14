@@ -1,0 +1,106 @@
+#cloud-config
+# Apohara Aegis — TechEx 2026 public demo droplet bootstrap.
+#
+# Runs on first boot of the Ubuntu 24.04 instance provisioned by
+# deploy/vultr_provision.py. Idempotent enough to re-run safely if a
+# step fails midway (cloud-init replays from runcmd: each invocation
+# is wrapped in `|| true` or check-and-skip guards).
+#
+# Cost note: this instance runs 24/7 at ~$0.20/day. Tear down via
+# `python3 deploy/vultr_provision.py --destroy` when the demo window
+# (May 14-26, 2026) closes.
+
+package_update: true
+package_upgrade: false  # avoid 5-minute kernel upgrade on first boot
+
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - gnupg
+  - lsb-release
+  - ufw
+
+write_files:
+  - path: /opt/aegis/.bootstrap.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      # Bootstrap the Apohara Aegis demo stack. Idempotent.
+      set -euo pipefail
+
+      LOG=/var/log/apohara-aegis-bootstrap.log
+      exec >>"$LOG" 2>&1
+      echo "=== aegis-bootstrap start: $(date -Iseconds) ==="
+
+      # ----- 1. Docker engine (official Debian repo install path) ------------
+      if ! command -v docker >/dev/null 2>&1; then
+        echo "[1/5] Installing Docker engine..."
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+          | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+        . /etc/os-release
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+        https://download.docker.com/linux/ubuntu $VERSION_CODENAME stable" \
+          >/etc/apt/sources.list.d/docker.list
+        apt-get update -y
+        apt-get install -y docker-ce docker-ce-cli containerd.io \
+          docker-buildx-plugin docker-compose-plugin
+      else
+        echo "[1/5] Docker already installed; skipping."
+      fi
+
+      systemctl enable --now docker
+
+      # ----- 2. Clone the apohara-aegis repo ---------------------------------
+      if [ ! -d /opt/apohara-aegis/.git ]; then
+        echo "[2/5] Cloning apohara-aegis..."
+        rm -rf /opt/apohara-aegis
+        git clone --depth=1 https://github.com/SuarezPM/apohara-aegis \
+          /opt/apohara-aegis
+      else
+        echo "[2/5] Repo already cloned; pulling latest main..."
+        git -C /opt/apohara-aegis fetch origin main || true
+        git -C /opt/apohara-aegis reset --hard origin/main || true
+      fi
+
+      # ----- 3. Discover public IP for Caddy site address --------------------
+      # nip.io maps <ip>.nip.io -> <ip> via wildcard DNS, so Let's Encrypt
+      # auto-issues a certificate without us configuring real DNS.
+      PUBLIC_IP="$(curl -fsS -m 10 https://api.ipify.org || \
+                   curl -fsS -m 10 https://ifconfig.me || \
+                   hostname -I | awk '{print $1}')"
+      echo "[3/5] Public IP detected: $PUBLIC_IP"
+
+      mkdir -p /opt/apohara-aegis/deploy
+      # AEGIS_SITE is consumed by Caddyfile via env-var substitution.
+      echo "AEGIS_SITE=${PUBLIC_IP}.nip.io" >/opt/apohara-aegis/deploy/.env
+
+      # ----- 4. Firewall (UFW): only 22, 80, 443 inbound ---------------------
+      echo "[4/5] Configuring UFW..."
+      ufw --force reset
+      ufw default deny incoming
+      ufw default allow outgoing
+      ufw allow 22/tcp comment "ssh"
+      ufw allow 80/tcp comment "http (caddy + acme http-01)"
+      ufw allow 443/tcp comment "https (caddy)"
+      ufw --force enable
+
+      # ----- 5. Bring up docker-compose stack --------------------------------
+      echo "[5/5] docker compose up -d..."
+      cd /opt/apohara-aegis/deploy
+      # Use the compose file in this directory.
+      docker compose pull || true
+      docker compose up -d --build
+
+      echo "=== aegis-bootstrap done: $(date -Iseconds) ==="
+      echo "Public URL should be live at: https://${PUBLIC_IP}.nip.io/"
+
+runcmd:
+  - [ bash, /opt/aegis/.bootstrap.sh ]
+
+final_message: |
+  Apohara Aegis cloud-init bootstrap finished at $TIMESTAMP after $UPTIME seconds.
+  Tail /var/log/apohara-aegis-bootstrap.log to verify docker compose came up.
+  The public URL is https://<IP>.nip.io/ — Caddy TLS issuance takes ~30s on first hit.
