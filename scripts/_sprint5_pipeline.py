@@ -327,6 +327,14 @@ def _intent_for_role(apohara_role: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+# Default model when caller passes a generic "gemini" name without a
+# version suffix. As of 2026-05-14 this is the free-tier-eligible
+# checkpoint on Google AI Studio (gemini-1.5-* deprecated; gemini-2.0-flash
+# requires paid quota on a fresh key). If Google shifts free-tier
+# eligibility again, update this constant — verified live on 2026-05-14.
+GEMINI_DEFAULT_MODEL = "gemini-2.5-flash-lite"
+
+
 def call_gemini(
     *,
     system_prompt: str,
@@ -337,10 +345,12 @@ def call_gemini(
     """Call Google Gemini API for cross-vendor critic invocation.
 
     Honesty discipline (Apohara AUDIT.md): this is the REAL Gemini SDK
-    integration, NOT a mock. It uses ``google.generativeai`` to call the
-    Gemini API directly. The critic agent gets routed here when its
-    ``provider`` field resolves to a name starting with ``gemini-``
-    (e.g. ``gemini-1.5-flash``, ``gemini-3-pro``).
+    integration, NOT a mock. It uses ``google.genai`` (the modern SDK
+    released to replace the deprecated ``google.generativeai`` in early
+    2026) to call the Gemini API directly. The critic agent gets routed
+    here when its ``provider`` field resolves to a name starting with
+    ``gemini-`` (e.g. ``gemini-2.5-flash-lite``, ``gemini-flash-latest``,
+    ``gemini-3-pro``).
 
     Requires the ``GEMINI_API_KEY`` (or ``GOOGLE_API_KEY``) env var.
     Without the key, returns ``None`` and the caller falls back to the
@@ -348,12 +358,24 @@ def call_gemini(
     not have a real Gemini key configured, no fake Gemini call is
     fabricated.
 
+    Model selection notes (2026-05-14, verified live):
+
+    - ``gemini-2.5-flash-lite`` — free tier eligible on a fresh key.
+      Default. Used when caller passes the bare ``"gemini"`` name.
+    - ``gemini-2.5-flash`` / ``gemini-flash-latest`` — may also work
+      on free tier depending on quota.
+    - ``gemini-2.0-flash`` / ``gemini-2.0-flash-001`` — observed to
+      return HTTP 429 RESOURCE_EXHAUSTED on a fresh free-tier key;
+      requires paid quota. Caller may pass these explicitly; we will
+      try them and surface the rate-limit error in the warning log.
+    - ``gemini-1.5-*`` — deprecated and removed from v1beta as of 2026.
+
     Args:
         system_prompt: the agent's system prompt (used as
             ``system_instruction`` in the Gemini API).
         user_content: the chained input from upstream agents.
-        model_name: e.g. ``"gemini-1.5-flash"`` (free tier 1,500
-            req/day) or ``"gemini-3-pro"`` (paid).
+        model_name: e.g. ``"gemini-2.5-flash-lite"`` or a legacy bare
+            ``"gemini"`` (which auto-resolves to ``GEMINI_DEFAULT_MODEL``).
         timeout_s: request timeout in seconds.
 
     Returns:
@@ -362,10 +384,12 @@ def call_gemini(
         Caller checks for None and falls through to vLLM.
     """
     try:
-        import google.generativeai as genai  # noqa: PLC0415
+        from google import genai  # noqa: PLC0415
+        from google.genai import types as genai_types  # noqa: PLC0415
     except ImportError:
         logger.debug(
-            "call_gemini: google-generativeai not installed; falling back"
+            "call_gemini: google-genai not installed; falling back. "
+            "Install with `pip install google-genai`."
         )
         return None
 
@@ -379,33 +403,42 @@ def call_gemini(
         )
         return None
 
+    # Normalize a bare "gemini" or "gemini-pro" hint to a concrete model.
+    if model_name in ("gemini", "gemini-pro"):
+        resolved_model = GEMINI_DEFAULT_MODEL
+    else:
+        resolved_model = model_name
+
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            model_name=model_name,
-            system_instruction=system_prompt,
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=resolved_model,
+            contents=user_content,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                max_output_tokens=256,
+                temperature=0.0,
+            ),
         )
-        response = model.generate_content(
-            user_content,
-            generation_config={
-                "max_output_tokens": 256,
-                "temperature": 0.0,
-            },
-            request_options={"timeout": timeout_s},
-        )
-        text = response.text or ""
-        # usage_metadata is available on most response objects
+        text = (response.text or "").strip()
+        # usage_metadata is available on the response object
         usage = getattr(response, "usage_metadata", None)
         total_tokens = (
-            getattr(usage, "total_token_count", 0) if usage else 0
+            int(getattr(usage, "total_token_count", 0) or 0)
+            if usage else 0
         )
         return {
             "content": text,
-            "total_tokens": int(total_tokens),
-            "model": model_name,
+            "total_tokens": total_tokens,
+            "model": resolved_model,
         }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("call_gemini: API call failed (%s); falling back", exc)
+        logger.warning(
+            "call_gemini: API call failed for model=%s (%s); falling back. "
+            "If this is a 429 RESOURCE_EXHAUSTED, the chosen model may "
+            "not have free-tier quota — try GEMINI_DEFAULT_MODEL.",
+            resolved_model, exc,
+        )
         return None
 
 

@@ -16,8 +16,12 @@ datasets>=4.0,<5   # JailbreakBench dataset loader
 # Cover image generator (PIL)
 pillow>=10.0,<12
 
-# Real Gemini SDK (optional path; honest fallback if GEMINI_API_KEY not set)
-google-generativeai>=0.8,<1
+# Real Gemini SDK (optional path; honest fallback if GEMINI_API_KEY not set).
+# Migrated 2026-05-14 from the deprecated `google-generativeai` (legacy
+# Vertex-style API) to `google-genai` (the modern unified SDK). The latter
+# is what gemini-2.5-flash-lite expects on the v1 endpoint; the former was
+# pinned to a v1beta API surface that no longer serves gemini-2.0+ models.
+google-genai>=2.0,<3
 
 # Notes:
 # - Lobster Trap binary (github.com/veeainc/lobstertrap) installed separately,

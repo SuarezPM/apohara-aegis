@@ -29,15 +29,17 @@ the `--critic-provider gemini-3-pro` CLI flag and YAML override existed in 6 fil
 
 **Why this was a violation**: the slide deck and integration doc implied Gemini was actually called, when in reality only the mock returned a slightly biased verdict. That gap is exactly what the honesty discipline exists to catch.
 
-**Fix in this repo (2026-05-13)**: added a real `call_gemini()` function in `scripts/_sprint5_pipeline.py` that uses the `google-generativeai` SDK with the `GEMINI_API_KEY` env var.
+**Fix in this repo (2026-05-13)**: added a real `call_gemini()` function in `scripts/_sprint5_pipeline.py` that calls the Gemini API with the `GEMINI_API_KEY` env var.
 
 - When `--critic-provider` starts with `gemini-` AND the env var is set, the critic step is routed to Google's actual Gemini API for that single agent call. The other 4 agents continue using vLLM.
 - When the env var is missing or the import fails, the function returns `None` and the caller falls through to the existing vLLM path. **No fake call is ever fabricated.**
 - Lobster Trap proxy does NOT see the Gemini request (the SDK bypasses LT). For full LT coverage with Gemini, deploy Gemini behind a proxy in your own setup — documented in source comment.
 
-**Honesty rating**: 🟢 PRODUCTION. The cross-vendor critic claim now maps to real Gemini API calls when configured; otherwise the feature degrades silently to a documented fallback.
+**Follow-up (2026-05-14, Innovation G — SDK migration)**: the initial 2026-05-13 fix imported `google.generativeai` (the legacy SDK, pinned in `requirements.txt` as `google-generativeai>=0.8,<1`). When we live-tested it against a real free-tier `GEMINI_API_KEY`, the legacy SDK could not reach the current model line: `gemini-1.5-*` was removed from the `v1beta` endpoint (HTTP 404) and `gemini-2.0-flash` returned `429 RESOURCE_EXHAUSTED` (paid quota only on a fresh key). We migrated `call_gemini()` to the modern `google-genai` SDK (`from google import genai` + `from google.genai import types as genai_types`), introduced a `GEMINI_DEFAULT_MODEL = "gemini-2.5-flash-lite"` constant so bare `"gemini"` / `"gemini-pro"` overrides auto-resolve to a free-tier-eligible model, and verified the function returns a real `ACCEPT` verdict with `total_tokens=49` (from the SDK's own `usage_metadata.total_token_count`) on `gemini-2.5-flash-lite`. `requirements.txt` was updated in the same commit: `google-generativeai>=0.8,<1` → `google-genai>=2.0,<3`. No fabricated test number; the verification is the SDK's reported token count.
 
-**Discovery credit**: external Perplexity Pro deep-research audit caught this gap during TechEx 2026 hackathon prep. External audit > self-attestation.
+**Honesty rating**: 🟢 PRODUCTION. The cross-vendor critic claim now maps to real Gemini API calls against a live, free-tier-eligible model when configured; otherwise the feature degrades silently to a documented fallback.
+
+**Discovery credit**: external Perplexity Pro deep-research audit (2026-05-13) caught the original mock-only gap during TechEx 2026 hackathon prep. The 2026-05-14 SDK migration was caught by Pablo's own live-test of the 2026-05-13 fix against a real key — without the live test, the deprecated SDK + dead model line would have shipped silent. External audit > self-attestation; live test > unit test against the SDK you already imported.
 
 ---
 
@@ -123,4 +125,4 @@ This repo (**Apohara Aegis**) is the **applied policy stack** that wraps two ope
 
 ---
 
-*Last updated: 2026-05-13. Maintained by Pablo M. Suarez. External audit contributions credited per entry.*
+*Last updated: 2026-05-14 (Innovation G — Gemini SDK migration). Maintained by Pablo M. Suarez. External audit contributions credited per entry.*

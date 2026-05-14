@@ -193,7 +193,7 @@ Every claim in this repo traces to either an executable check (see `tests/`) or 
 
 A specific entry worth surfacing publicly: during TechEx 2026 prep work, an **external Perplexity Pro deep-research audit** (2026-05-13) caught that 18 mentions of "Gemini" across docs/scripts/configs/pitch were not backed by any real `google-generativeai` or `vertex-ai` import — the mock-mode pipeline biased verdicts when the override started with `"gemini"`, but no real Gemini API call was made anywhere.
 
-We accepted the finding, implemented real Gemini SDK integration with the `google-generativeai` package, and documented both the original gap and the fix in [`AUDIT.md`](AUDIT.md). Without `GEMINI_API_KEY` set, the function returns `None` and the caller falls through to the existing vLLM path — **no fake Gemini call is fabricated**.
+We accepted the finding and implemented real Gemini SDK integration — initially against `google-generativeai` (2026-05-13), then migrated to the modern `google-genai` SDK (2026-05-14, Innovation G) after live-testing surfaced that the legacy SDK could not reach the current free-tier model (`gemini-2.5-flash-lite`). Both the original gap and the SDK migration are documented in [`AUDIT.md`](AUDIT.md) §1. Without `GEMINI_API_KEY` set, the function returns `None` and the caller falls through to the existing vLLM path — **no fake Gemini call is fabricated**.
 
 This is the kind of honesty discipline a regulator can actually use. **External audit > self-attestation.**
 
@@ -207,7 +207,7 @@ This is the kind of honesty discipline a regulator can actually use. **External 
 | **[Apohara Context Forge](https://github.com/SuarezPM/Apohara_Context_Forge)** (Python) | INV-15 invariant specification + MI300X-validated codec | Apache-2.0 |
 | **[Gradio](https://gradio.app)** | JBB Live Defense dashboard UI | Apache-2.0 |
 | **[JailbreakBench](https://jailbreakbench.github.io/)** (NeurIPS 2024) | 100 categorized adversarial prompts loaded via HuggingFace `datasets` | MIT |
-| **[google-generativeai](https://github.com/google/generative-ai-python)** SDK | Optional cross-vendor critic path | Apache-2.0 |
+| **[google-genai](https://github.com/googleapis/python-genai)** SDK | Optional cross-vendor critic path (Gemini). Migrated 2026-05-14 from the deprecated `google-generativeai` package. | Apache-2.0 |
 
 Python 3.11+. CPU-only for the policy stack; the upstream MI300X measurements live in [Apohara Context Forge](https://github.com/SuarezPM/Apohara_Context_Forge).
 
