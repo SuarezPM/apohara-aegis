@@ -1,15 +1,16 @@
-"""JailbreakBench Live Defense — Gradio dashboard.
+"""JailbreakBench Live Defense — Apohara Aegis Gradio dashboard.
 
 Runs the JailbreakBench JBB-Behaviors dataset (NeurIPS 2024 Datasets and
-Benchmarks track) live through the Lobster Trap + ContextForge stack and
-visualizes block-rate by category in real time. Produces a JSONL
-benchmark report alongside the dashboard.
+Benchmarks track) live through the Apohara Aegis defense-in-depth stack
+(Aegis OWASP regex pre-filter -> Lobster Trap perimeter DPI ->
+GeminiJudge semantic classifier) and visualizes block-rate by category
+in real time. Produces a JSONL benchmark report alongside the dashboard.
 
 Stretch deliverable for TechEx 2026 Track 1 submission. Sits next to
 the static `assets/inv15-governance-dashboard.html`; this Gradio app
 is the *live* counterpart that judges can run themselves.
 
-Usage:
+Usage (Gradio mode):
 
     # Terminal 1: start Lobster Trap pointing at any backend
     ~/Documentos/external/lobstertrap/lobstertrap serve \\
@@ -23,6 +24,11 @@ Usage:
 
     # Then open http://localhost:7860 in a browser.
 
+Usage (headless CLI for the JBB measurement runs):
+
+    PYTHONPATH=. python3 scripts/jbb_live_defense.py \\
+        --batch 100 --headless --out logs/jbb_defense_full.json
+
 If LOBSTERTRAP_ENDPOINT is not set or unreachable, the dashboard runs
 in simulated mode (clearly labeled in the UI) so it remains demoable
 on any laptop without infrastructure.
@@ -32,15 +38,24 @@ the export JSON `mode` field reflects ``"simulated"`` vs ``"live"``.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import random
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Generator, Optional
 
 import gradio as gr
+
+from apohara_aegis.defense_chain import (
+    ChainVerdict,
+    DefenseChain,
+    make_default_chain,
+)
+from apohara_aegis.gemini_judge import GeminiJudge, make_default_judge
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +65,15 @@ import gradio as gr
 
 LT_ENDPOINT = os.environ.get("LOBSTERTRAP_ENDPOINT", "")
 MAX_PROMPTS = 100  # JBB-Behaviors harmful split has exactly 100 rows
+
+# Calibrated GeminiJudge confidence threshold for blocking. Set to the
+# value selected by ``scripts/calibrate_jbb.py`` on a held-out 20-prompt
+# validation subset (next commit). Until the calibration script runs and
+# rewrites this constant, the conservative default 0.7 from the
+# DefenseChain constructor is used. The constant is the single source of
+# truth so the Gradio dashboard, the calibration script, and the
+# headless --batch CLI all use the same gate.
+CALIBRATED_JUDGE_THRESHOLD = 0.7
 
 
 CATEGORY_COLORS = {
@@ -212,11 +236,43 @@ def simulate_block(prompt: str, category: str, rng: random.Random) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _build_chain(
+    is_live: bool,
+    rng: Optional[random.Random] = None,
+    judge_threshold: float = CALIBRATED_JUDGE_THRESHOLD,
+    judge: Optional[GeminiJudge] = None,
+) -> DefenseChain:
+    """Construct the 3-layer DefenseChain used by all run paths.
+
+    - Layer 1 (Aegis regex): always wired (zero-cost, sub-ms).
+    - Layer 2 (Lobster Trap): wired to ``call_lt`` when LT is reachable
+      (``is_live=True``), otherwise to ``simulate_block`` so SIMULATED
+      mode still exercises the chain shape end-to-end.
+    - Layer 3 (GeminiJudge): wired when a judge is provided.
+
+    The chain instance is intentionally constructed once per run, not
+    per prompt, so the genai client + SA loading happens once.
+    """
+    if is_live:
+        lt_call_fn = call_lt
+    else:
+        rng_local = rng or random.Random(42)
+        # Wrap simulate_block to the chain's lt_call_fn signature.
+        def lt_call_fn(prompt: str) -> dict:  # type: ignore[misc]
+            return simulate_block(prompt, "unknown", rng_local)
+
+    return make_default_chain(
+        judge=judge,
+        lt_call_fn=lt_call_fn,
+        judge_threshold=judge_threshold,
+    )
+
+
 def run_defense(n_prompts: int, simulate: bool):
     """Run the JBB defense suite. Yields progressive updates."""
     n_prompts = int(n_prompts)
     is_live = bool(LT_ENDPOINT) and not simulate
-    mode_label = "LIVE (Lobster Trap proxy)" if is_live else "SIMULATED"
+    mode_label = "LIVE (Aegis chain on LT proxy)" if is_live else "SIMULATED"
     rng = random.Random(42)
 
     yield (
@@ -239,9 +295,13 @@ def run_defense(n_prompts: int, simulate: bool):
         )
         return
 
+    judge = make_default_judge()
+    chain = _build_chain(is_live=is_live, rng=rng, judge=judge)
+
     blocks_by_cat: dict[str, int] = {}
     totals_by_cat: dict[str, int] = {}
     rules_counter: dict[str, int] = {}
+    by_layer_counter: dict[str, int] = {}
     latencies: list[float] = []
     records: list[dict] = []
 
@@ -251,14 +311,21 @@ def run_defense(n_prompts: int, simulate: bool):
         source = row["Source"]
         totals_by_cat[cat] = totals_by_cat.get(cat, 0) + 1
 
-        if is_live:
-            result = call_lt(goal)
-        else:
-            result = simulate_block(goal, cat, rng)
+        cv: ChainVerdict = chain.evaluate(goal)
+        result = {
+            "blocked": cv.blocked,
+            "rule": cv.rule or "allowed",
+            "latency_ms": cv.total_latency_ms,
+            "defended_by": cv.defended_by,
+            "layer_latencies": cv.layer_latencies,
+        }
 
-        if result["blocked"]:
+        if cv.blocked:
             blocks_by_cat[cat] = blocks_by_cat.get(cat, 0) + 1
         rules_counter[result["rule"]] = rules_counter.get(result["rule"], 0) + 1
+        by_layer_counter[cv.defended_by] = by_layer_counter.get(
+            cv.defended_by, 0
+        ) + 1
         latencies.append(result["latency_ms"])
 
         records.append({
@@ -268,7 +335,10 @@ def run_defense(n_prompts: int, simulate: bool):
             "goal": goal[:120],
             "blocked": result["blocked"],
             "rule": result["rule"],
+            "defended_by": cv.defended_by,
+            "confidence": cv.confidence,
             "latency_ms": result["latency_ms"],
+            "layer_latencies": cv.layer_latencies,
         })
 
         # Progressive update every 5 prompts (or last)
@@ -277,7 +347,7 @@ def run_defense(n_prompts: int, simulate: bool):
             block_rate = 100.0 * total_blocks / i
             pct = 100 * i / n_prompts
             cat_summary = _render_category_breakdown(blocks_by_cat, totals_by_cat)
-            rule_summary = _render_rule_breakdown(rules_counter)
+            rule_summary = _render_rule_breakdown(rules_counter, by_layer_counter)
             latency_p50 = sorted(latencies)[len(latencies) // 2]
             yield (
                 f"### Processing {i}/{n_prompts} · {block_rate:.1f}% blocked · mode: {mode_label}",
@@ -299,6 +369,7 @@ def run_defense(n_prompts: int, simulate: bool):
         "timestamp_iso": datetime.now(tz=timezone.utc).isoformat(),
         "mode": "live" if is_live else "simulated",
         "lobstertrap_endpoint": LT_ENDPOINT if is_live else None,
+        "judge_threshold": CALIBRATED_JUDGE_THRESHOLD,
         "dataset": "JailbreakBench/JBB-Behaviors",
         "split": "harmful",
         "n_prompts": n_prompts,
@@ -309,6 +380,7 @@ def run_defense(n_prompts: int, simulate: bool):
             for cat in totals_by_cat
         },
         "by_rule": rules_counter,
+        "by_defense_layer": by_layer_counter,
         "latency_ms_p50": p50,
         "latency_ms_p99": p99,
         "records": records,
@@ -354,13 +426,28 @@ def _render_category_breakdown(blocks_by_cat: dict, totals_by_cat: dict) -> str:
     return "\n".join(lines)
 
 
-def _render_rule_breakdown(rules_counter: dict) -> str:
-    if not rules_counter:
+def _render_rule_breakdown(rules_counter: dict,
+                             by_layer_counter: dict | None = None) -> str:
+    """Render the rule + per-defense-layer breakdown for the Gradio UI."""
+    if not rules_counter and not by_layer_counter:
         return "_no data yet_"
-    lines = ["| Rule fired | Count |", "|---|---:|"]
-    for rule, count in sorted(rules_counter.items(), key=lambda x: -x[1]):
-        lines.append(f"| `{rule}` | {count} |")
-    return "\n".join(lines)
+    blocks = []
+    if by_layer_counter:
+        layer_lines = ["**By defense layer:**",
+                       "| Layer | Count |",
+                       "|---|---:|"]
+        for layer, count in sorted(by_layer_counter.items(),
+                                    key=lambda x: -x[1]):
+            layer_lines.append(f"| `{layer}` | {count} |")
+        blocks.append("\n".join(layer_lines))
+    if rules_counter:
+        rule_lines = ["**By rule:**",
+                      "| Rule fired | Count |",
+                      "|---|---:|"]
+        for rule, count in sorted(rules_counter.items(), key=lambda x: -x[1]):
+            rule_lines.append(f"| `{rule}` | {count} |")
+        blocks.append("\n".join(rule_lines))
+    return "\n\n".join(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -377,20 +464,27 @@ def build_ui() -> gr.Blocks:
     )
 
     with gr.Blocks(
-        title="Apohara × Lobster Trap · JBB Live Defense",
+        title="Apohara Aegis · JBB Live Defense",
         theme=gr.themes.Base(primary_hue="red", neutral_hue="slate"),
     ) as demo:
-        gr.Markdown(f"""# 🦞 Apohara ContextForge × Lobster Trap — JBB Live Defense
+        gr.Markdown(f"""# Apohara Aegis — JBB Live Defense
 
-Runs **JailbreakBench JBB-Behaviors** (NeurIPS 2024) through your Lobster Trap policy
-and reports per-category block rate live. **Honesty discipline applied**: mode
-(live/simulated) is shown above and recorded in every exported JSON report.
+Runs **JailbreakBench JBB-Behaviors** (NeurIPS 2024) through the **Apohara Aegis
+3-layer defense chain** (Aegis OWASP regex pre-filter → Lobster Trap perimeter
+DPI → GeminiJudge semantic classifier on `gemini-3.1-pro-preview`) and reports
+per-category block rate + per-layer attribution live. **Honesty discipline applied**:
+mode (live/simulated) is shown above and recorded in every exported JSON report,
+including the calibrated judge threshold (`{CALIBRATED_JUDGE_THRESHOLD}`).
 
 {mode_banner}
 
-**Policy under test:** `configs/lobstertrap_policy.yaml` (9 rules, custom Apohara × Veea policy).
+**Defense layers under test:**
+1. `apohara_aegis/owasp_regex.py` — OWASP ASI 2026 regex pre-filter
+2. `configs/lobstertrap_policy.yaml` — 9-rule Apohara × Veea LT policy
+3. `apohara_aegis/gemini_judge.py` — GeminiJudge (`gemini-3.1-pro-preview` primary, `gemini-2.5-pro` Vertex AI fallback)
+
 **Source dataset:** [JailbreakBench/JBB-Behaviors](https://huggingface.co/datasets/JailbreakBench/JBB-Behaviors) ([github](https://github.com/JailbreakBench/jailbreakbench)).
-**Threat model:** [`docs/threat-model.md`](https://github.com/SuarezPM/Apohara_Context_Forge/blob/main/docs/threat-model.md).
+**Engine:** powered by the [Apohara ContextForge](https://github.com/SuarezPM/Apohara_Context_Forge) INV-15 trust layer.
 """)
 
         with gr.Row():
@@ -444,6 +538,204 @@ drift under KV reuse — see [paper Zenodo DOI 10.5281/zenodo.20114594](https://
     return demo
 
 
+# ---------------------------------------------------------------------------
+# Headless CLI batch runner (used by the JBB measurement runs in Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def run_headless(
+    n_prompts: int,
+    out_path: Path,
+    simulate: bool = False,
+    seed: int = 0,
+    judge_threshold: float = CALIBRATED_JUDGE_THRESHOLD,
+    excluded_indices: Optional[set[int]] = None,
+) -> dict:
+    """Run the JBB defense suite without Gradio, write JSON to ``out_path``.
+
+    Sister function to ``run_defense`` (the Gradio generator). Returns
+    the report dict so the calibration script can sweep thresholds
+    in-process. ``excluded_indices`` lets callers skip the prompts used
+    for calibration so the full-run measurement is on a held-out
+    100-prompt set.
+    """
+    is_live = bool(LT_ENDPOINT) and not simulate
+    rng = random.Random(seed)
+
+    # Load N prompts deterministically with the supplied seed; if
+    # ``excluded_indices`` is set, oversample to be able to exclude.
+    raw_prompts = load_jbb_prompts(n=MAX_PROMPTS, seed=seed)
+    if excluded_indices:
+        prompts = [p for i, p in enumerate(raw_prompts)
+                   if i not in excluded_indices][:n_prompts]
+    else:
+        prompts = raw_prompts[:n_prompts]
+
+    judge = make_default_judge()
+    chain = _build_chain(
+        is_live=is_live, rng=rng, judge=judge,
+        judge_threshold=judge_threshold,
+    )
+
+    blocks_by_cat: dict[str, int] = {}
+    totals_by_cat: dict[str, int] = {}
+    rules_counter: dict[str, int] = {}
+    by_layer_counter: dict[str, int] = {}
+    latencies: list[float] = []
+    records: list[dict] = []
+    total_token_count = 0
+
+    t0_run = time.perf_counter()
+    for i, row in enumerate(prompts, 1):
+        cat = row["Category"]
+        goal = row["Goal"]
+        source = row["Source"]
+        totals_by_cat[cat] = totals_by_cat.get(cat, 0) + 1
+
+        cv: ChainVerdict = chain.evaluate(goal)
+        rule = cv.rule or "allowed"
+
+        if cv.blocked:
+            blocks_by_cat[cat] = blocks_by_cat.get(cat, 0) + 1
+        rules_counter[rule] = rules_counter.get(rule, 0) + 1
+        by_layer_counter[cv.defended_by] = by_layer_counter.get(
+            cv.defended_by, 0
+        ) + 1
+        latencies.append(cv.total_latency_ms)
+
+        record = {
+            "idx": i,
+            "category": cat,
+            "source": source,
+            "goal": goal[:200],
+            "blocked": cv.blocked,
+            "defended_by": cv.defended_by,
+            "rule": rule,
+            "confidence": cv.confidence,
+            "total_latency_ms": cv.total_latency_ms,
+            "layer_latencies": cv.layer_latencies,
+        }
+        if cv.judge_verdict is not None:
+            record["judge_verdict"] = {
+                "is_harmful": cv.judge_verdict.is_harmful,
+                "confidence": cv.judge_verdict.confidence,
+                "category": cv.judge_verdict.category,
+                "reason": cv.judge_verdict.reason,
+                "model": cv.judge_verdict.model,
+                "path": cv.judge_verdict.path,
+                "latency_ms": cv.judge_verdict.latency_ms,
+                "error": cv.judge_verdict.error,
+            }
+        records.append(record)
+
+        # Per-prompt log line so the user sees progress in real time.
+        print(
+            f"  [{i:>3}/{n_prompts}] {cat[:24]:24}  "
+            f"{'BLOCK' if cv.blocked else 'ALLOW':5}  "
+            f"by={cv.defended_by:14}  conf={cv.confidence:.2f}  "
+            f"lat={cv.total_latency_ms:.0f}ms",
+            flush=True,
+        )
+
+    total_run_s = time.perf_counter() - t0_run
+    total_blocks = sum(blocks_by_cat.values())
+    overall_block_rate = total_blocks / max(n_prompts, 1)
+    p50 = sorted(latencies)[len(latencies) // 2] if latencies else 0.0
+    p99_idx = max(0, int(len(latencies) * 0.99) - 1)
+    p99 = sorted(latencies)[p99_idx] if latencies else 0.0
+
+    # Cost estimate (upper bound — see GeminiJudge.cost_estimate_usd).
+    cost_est = judge.cost_estimate_usd(by_layer_counter.get(
+        "gemini_judge", 0
+    ))
+
+    report = {
+        "timestamp_unix": int(time.time()),
+        "timestamp_iso": datetime.now(tz=timezone.utc).isoformat(),
+        "mode": "live" if is_live else "simulated",
+        "lobstertrap_endpoint": LT_ENDPOINT if is_live else None,
+        "judge_threshold": judge_threshold,
+        "calibrated_threshold_constant": CALIBRATED_JUDGE_THRESHOLD,
+        "dataset": "JailbreakBench/JBB-Behaviors",
+        "split": "harmful",
+        "n_prompts": n_prompts,
+        "seed": seed,
+        "excluded_indices_count":
+            len(excluded_indices) if excluded_indices else 0,
+        "overall_block_rate": overall_block_rate,
+        "total_blocked": total_blocks,
+        "by_category": {
+            cat: {"blocks": blocks_by_cat.get(cat, 0),
+                  "total": totals_by_cat[cat]}
+            for cat in totals_by_cat
+        },
+        "by_rule": rules_counter,
+        "by_defense_layer": by_layer_counter,
+        "latency_p50_ms": p50,
+        "latency_p99_ms": p99,
+        "total_run_s": total_run_s,
+        "cost_est_usd": cost_est,
+        "records": records,
+    }
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False))
+    print(
+        f"\n=== JBB Live Defense (headless) ==="
+        f"\n  n_prompts        : {n_prompts}"
+        f"\n  mode             : {report['mode']}"
+        f"\n  judge_threshold  : {judge_threshold}"
+        f"\n  overall_block_rate: {overall_block_rate:.2%}"
+        f"\n  by_defense_layer : {by_layer_counter}"
+        f"\n  latency_p50_ms   : {p50:.0f}"
+        f"\n  latency_p99_ms   : {p99:.0f}"
+        f"\n  cost_est_usd     : {cost_est}"
+        f"\n  report written to: {out_path}"
+    )
+    return report
+
+
+def _parse_cli_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Apohara Aegis JBB Live Defense — Gradio UI or "
+                    "headless --batch CLI for the measurement runs.",
+    )
+    p.add_argument("--headless", action="store_true",
+                   help="Run without launching the Gradio UI.")
+    p.add_argument("--batch", type=int, default=None,
+                   help="Headless mode: number of JBB prompts to run "
+                        "(forces --headless when set).")
+    p.add_argument("--simulate", action="store_true",
+                   help="Force simulated mode even if LOBSTERTRAP_ENDPOINT is set.")
+    p.add_argument("--seed", type=int, default=0,
+                   help="Random.seed for deterministic JBB shuffling (default 0).")
+    p.add_argument("--judge-threshold", type=float,
+                   default=CALIBRATED_JUDGE_THRESHOLD,
+                   help=f"GeminiJudge confidence threshold for block "
+                        f"(default {CALIBRATED_JUDGE_THRESHOLD}, the "
+                        f"calibrated value).")
+    p.add_argument("--out", type=Path,
+                   default=Path("logs") /
+                   f"jbb_defense_{int(time.time())}.json",
+                   help="Output JSON path (headless mode only).")
+    return p.parse_args()
+
+
 if __name__ == "__main__":
-    app = build_ui()
-    app.launch(server_name="0.0.0.0", server_port=7860, share=False)
+    args = _parse_cli_args()
+    if args.headless or args.batch is not None:
+        n = args.batch if args.batch is not None else MAX_PROMPTS
+        try:
+            run_headless(
+                n_prompts=n,
+                out_path=args.out,
+                simulate=args.simulate,
+                seed=args.seed,
+                judge_threshold=args.judge_threshold,
+            )
+        except KeyboardInterrupt:
+            print("Interrupted by user.", file=sys.stderr)
+            sys.exit(130)
+    else:
+        app = build_ui()
+        app.launch(server_name="0.0.0.0", server_port=7860, share=False)
