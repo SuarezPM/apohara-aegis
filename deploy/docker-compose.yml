@@ -170,8 +170,14 @@ services:
       CALIBRATED_JUDGE_THRESHOLD: "0.5"
     tmpfs:
       # User home + pip --user prefix. Ephemeral; recreated each restart.
-      - /tmp/aegis-home:uid=65532,gid=65532,mode=0700
-      - /tmp/aegis-pip:uid=65532,gid=65532,mode=0700
+      # `exec` is REQUIRED on /tmp/aegis-pip: pip --user installs C
+      # extensions (numpy, etc.) as .so shared libraries that Python
+      # must mmap-exec. Without exec the import fails with
+      # "failed to map segment from shared object". The cost of allowing
+      # exec on this single tmpfs is small (only the aegis user can
+      # write here; uid 65532 == non-root). /tmp/aegis-home stays noexec.
+      - /tmp/aegis-home:uid=65532,gid=65532,mode=0700,noexec
+      - /tmp/aegis-pip:uid=65532,gid=65532,mode=0700,exec
     command:
       - bash
       - -c
