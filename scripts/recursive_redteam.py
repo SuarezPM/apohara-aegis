@@ -35,6 +35,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -188,7 +189,12 @@ def gemini_generate_attack(
             return text, False
         except Exception as e:  # noqa: BLE001 — surface every Gemini failure
             msg = str(e)
-            is_429 = "429" in msg or "RESOURCE_EXHAUSTED" in msg or "rate" in msg.lower()
+            # Match Gemini quota errors precisely. Earlier code also matched
+            # the substring "rate" in msg.lower(), which false-positives on
+            # unrelated exceptions whose messages contain words like
+            # "integrate" / "generate" / "separate". Code-review MEDIUM
+            # finding (2026-05-14 Phase-4 review).
+            is_429 = "429" in msg or "RESOURCE_EXHAUSTED" in msg
             if is_429 and attempt < max_retries - 1:
                 wait = 60
                 print(f"  [gemini] rate-limited ({category}), waiting {wait}s "
@@ -390,58 +396,62 @@ def run_redteam(
                       f"({len(prompt_text)} chars)")
 
     # ---- 2. Defense phase --------------------------------------------------
+    # ExitStack ensures httpx.Client is closed even if the per-prompt
+    # defense loop raises midway through (code-review MEDIUM finding,
+    # Phase-4 review 2026-05-14: the previous explicit `.close()` at the
+    # end of this block was unreachable on exception).
     mode = "live"
     http_client = None
-    if lt_endpoint:
-        try:
-            import httpx  # noqa: PLC0415
+    with contextlib.ExitStack() as stack:
+        if lt_endpoint:
+            try:
+                import httpx  # noqa: PLC0415
 
-            http_client = httpx.Client(timeout=15.0)
-            probe = http_client.get(f"{lt_endpoint}/")
-            print(f"[def] LT proxy reachable at {lt_endpoint} "
-                  f"(probe={probe.status_code})")
-        except Exception as e:  # noqa: BLE001
-            print(f"[def] LT proxy NOT reachable ({e}); falling back to "
-                  "inspect subprocess.", file=sys.stderr)
-            http_client = None
-    if http_client is None:
-        mode = "inspect_subprocess"
-        if not LT_BINARY.exists():
-            print(f"[def] ERROR: {LT_BINARY} not found. Cannot defend.",
-                  file=sys.stderr)
-            mode = "no_defense_available"
+                http_client = stack.enter_context(httpx.Client(timeout=15.0))
+                probe = http_client.get(f"{lt_endpoint}/")
+                print(f"[def] LT proxy reachable at {lt_endpoint} "
+                      f"(probe={probe.status_code})")
+            except Exception as e:  # noqa: BLE001
+                print(f"[def] LT proxy NOT reachable ({e}); falling back to "
+                      "inspect subprocess.", file=sys.stderr)
+                http_client = None
+        if http_client is None:
+            mode = "inspect_subprocess"
+            if not LT_BINARY.exists():
+                print(f"[def] ERROR: {LT_BINARY} not found. Cannot defend.",
+                      file=sys.stderr)
+                mode = "no_defense_available"
 
-    if rate_limited:
-        # All-or-most prompts came from fallback corpus
-        from_fallback = sum(1 for a in attacks if a["source"] == "fallback_corpus")
-        if from_fallback >= len(attacks) // 2:
-            mode = "simulated_due_to_rate_limit"
+        if rate_limited:
+            # All-or-most prompts came from fallback corpus
+            from_fallback = sum(1 for a in attacks
+                                if a["source"] == "fallback_corpus")
+            if from_fallback >= len(attacks) // 2:
+                mode = "simulated_due_to_rate_limit"
 
-    defense_log_path = LOGS_DIR / f"redteam_defense_{timestamp}.jsonl"
-    results: list[dict[str, Any]] = []
-    with defense_log_path.open("w", encoding="utf-8") as dlog:
-        for atk in attacks:
-            if mode == "no_defense_available":
-                verdict = {
-                    "blocked": False, "rule_name": None,
-                    "latency_ms": 0.0, "errored": True,
-                    "error": "no defense backend available",
-                }
-            elif http_client is not None:
-                verdict = defend_live(http_client, lt_endpoint, atk["prompt"])
-            else:
-                verdict = defend_inspect(atk["prompt"])
-            row = {**atk, **verdict, "evaluated_at":
-                   datetime.now(timezone.utc).isoformat()}
-            results.append(row)
-            dlog.write(json.dumps(row, ensure_ascii=False) + "\n")
-            status = ("BLOCK" if verdict.get("blocked")
-                      else ("ERROR" if verdict.get("errored") else "PASS"))
-            print(f"  [def] {atk['category']}#{atk['index_in_category']:>2}  "
-                  f"{status:5}  ({verdict.get('latency_ms', 0):.0f}ms)  "
-                  f"rule={verdict.get('rule_name')}")
-    if http_client is not None:
-        http_client.close()
+        defense_log_path = LOGS_DIR / f"redteam_defense_{timestamp}.jsonl"
+        results: list[dict[str, Any]] = []
+        with defense_log_path.open("w", encoding="utf-8") as dlog:
+            for atk in attacks:
+                if mode == "no_defense_available":
+                    verdict = {
+                        "blocked": False, "rule_name": None,
+                        "latency_ms": 0.0, "errored": True,
+                        "error": "no defense backend available",
+                    }
+                elif http_client is not None:
+                    verdict = defend_live(http_client, lt_endpoint, atk["prompt"])
+                else:
+                    verdict = defend_inspect(atk["prompt"])
+                row = {**atk, **verdict, "evaluated_at":
+                       datetime.now(timezone.utc).isoformat()}
+                results.append(row)
+                dlog.write(json.dumps(row, ensure_ascii=False) + "\n")
+                status = ("BLOCK" if verdict.get("blocked")
+                          else ("ERROR" if verdict.get("errored") else "PASS"))
+                print(f"  [def] {atk['category']}#{atk['index_in_category']:>2}  "
+                      f"{status:5}  ({verdict.get('latency_ms', 0):.0f}ms)  "
+                      f"rule={verdict.get('rule_name')}")
 
     # ---- 3. Aggregate report ----------------------------------------------
     by_cat: dict[str, dict[str, Any]] = {}
