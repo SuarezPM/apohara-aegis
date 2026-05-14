@@ -19,7 +19,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-2ECC71.svg?style=flat-square"></a>
   <a href="https://github.com/veeainc/lobstertrap"><img src="https://img.shields.io/badge/depends%20on-Lobster%20Trap%20(MIT)-FF6B00.svg?style=flat-square"></a>
   <a href="https://jailbreakbench.github.io/"><img src="https://img.shields.io/badge/benchmark-JailbreakBench%20(NeurIPS%202024)-8B5CF6.svg?style=flat-square"></a>
-  <a href="tests/test_lobstertrap_integration.py"><img src="https://img.shields.io/badge/tests-4%2F4%20live%20PASS-22C55E.svg?style=flat-square"></a>
+  <a href="tests/test_lobstertrap_integration.py"><img src="https://img.shields.io/badge/tests-6%20PASS%20%C2%B7%202%20xfail%20documented-22C55E.svg?style=flat-square"></a>
+  <a href="docs/threat-model.md#44-owasp-top-10-for-agentic-applications-2026-mapping"><img src="https://img.shields.io/badge/OWASP%20ASI%202026-6%2F10%20direct%20coverage-FF6B00.svg?style=flat-square"></a>
 </p>
 
 <p align="center">
