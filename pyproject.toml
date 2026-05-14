@@ -35,3 +35,6 @@ smolagents = ["smolagents>=1.0,<2"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "live: tests that hit a real external API (Gemini AI Studio / Vertex). Auto-skipped when GEMINI_API_KEY is not set.",
+]
