@@ -1,9 +1,12 @@
 """Recursive AI Red-Team: Gemini generates attacks, Aegis Lobster Trap defends.
 
 Innovation I for Apohara Aegis. Demonstrates "even an AI attacker cannot
-break this" by having Gemini (gemini-2.5-flash-lite, free tier) generate
-novel adversarial prompts across 5 OWASP ASI 2026 categories and feeding
-them through the Lobster Trap policy enforcement layer.
+break this" by having Gemini (``gemini-3.1-pro-preview``, current SOTA on
+the paid AI Studio prepayment as of 2026-05-14 PM) generate novel
+adversarial prompts across 5 OWASP ASI 2026 categories and feeding them
+through the Lobster Trap policy enforcement layer. Symmetric AI-vs-AI
+narrative: same model class on both sides of the gate — the defense
+still has to win.
 
 Three execution modes, in order of preference:
 
@@ -57,7 +60,16 @@ LOGS_DIR = REPO_ROOT / "logs"
 LT_BINARY = Path.home() / "Documentos" / "external" / "lobstertrap" / "lobstertrap"
 LT_POLICY = REPO_ROOT / "configs" / "lobstertrap_policy.yaml"
 
-GEMINI_MODEL = "gemini-2.5-flash-lite"
+# Attacker model. Bumped from "gemini-2.5-flash-lite" (free tier, original
+# Innovation I) to "gemini-3.1-pro-preview" on 2026-05-14 PM after the
+# user's AI Studio prepayment top-up. The ``-preview`` suffix is mandatory:
+# Google has NOT shipped the non-preview alias yet, and ``gemini-3.1-pro``
+# returns 404 on ``generativelanguage.googleapis.com``. The Vertex AI
+# fallback (project ``gen-lang-client-0658922897``) also returns 404 for
+# every 3.x variant across all regions, so this attacker is AI Studio-only.
+# See AUDIT.md entry #9 and ``GEMINI_DEFAULT_MODEL`` in
+# ``scripts/_sprint5_pipeline.py`` for the full diagnostic story.
+GEMINI_MODEL = "gemini-3.1-pro-preview"
 
 ASI_CATEGORIES: dict[str, str] = {
     "ASI01": "Agent Goal Hijack — adversary subverts the agent's declared "
