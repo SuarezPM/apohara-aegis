@@ -403,14 +403,27 @@ def call_gemini(
         )
         return None
 
-    # Normalize a bare "gemini" or "gemini-pro" hint to a concrete model.
-    if model_name in ("gemini", "gemini-pro"):
+    # Normalize a bare "gemini" hint to a concrete model. "gemini-pro" is
+    # left as-is and allowed to surface a 404/429 from upstream rather than
+    # being silently downgraded to the flash-lite default (code-review
+    # finding 2026-05-14: collapsing "gemini-pro" to flash-lite hid a tier
+    # change from the caller).
+    if model_name == "gemini":
         resolved_model = GEMINI_DEFAULT_MODEL
     else:
         resolved_model = model_name
 
     try:
-        client = genai.Client(api_key=api_key)
+        # google-genai 2.x does NOT honor request_options={"timeout": ...}
+        # (that was the legacy google-generativeai shape). Timeout has to
+        # be applied via HttpOptions on the Client itself. Without this the
+        # judge demo would hang on the OS-default ~120s when Gemini stalls.
+        client = genai.Client(
+            api_key=api_key,
+            http_options=genai_types.HttpOptions(
+                timeout=int(timeout_s * 1000),  # milliseconds
+            ),
+        )
         response = client.models.generate_content(
             model=resolved_model,
             contents=user_content,
