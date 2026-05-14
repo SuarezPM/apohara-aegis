@@ -26,12 +26,27 @@
 }
 
 # Reusable basicauth snippet for the judge interface. The bcrypt hash
-# baked in is for password ``apohara-aegis-techex-2026``; override at
-# deploy time via AEGIS_JUDGE_PASS_HASH (the output of
-# ``caddy hash-password --plaintext '<your-password>'``).
+# baked in is for password ``apohara-aegis-techex-2026`` (generated
+# by `caddy hash-password --plaintext 'apohara-aegis-techex-2026'`).
+#
+# Phase-3 deployment lesson (2026-05-14): we previously tried to inject
+# the user/hash via the AEGIS_JUDGE_USER / AEGIS_JUDGE_PASS_HASH env
+# vars with Caddyfile's {$VAR:default} syntax, but docker-compose's
+# own `${VAR:-}` expansion in docker-compose.yml mangled the bcrypt
+# `$2a$14$...` string (every `$` triggered shell expansion, leaving
+# truncated garbage in the Caddy env). Bcrypt then silently rejected
+# every authentic password. We accept the hardcoded credential here
+# because (a) the bcrypt cost still makes brute-force expensive,
+# (b) judges only have read-only access to a defense demo with a
+# stubbed mock-LLM backend, and (c) operators can rotate by editing
+# this file in place + recreating the caddy container.
+#
+# To rotate: generate a new hash with
+#   docker run --rm caddy:2.8 caddy hash-password --plaintext '<your-pw>'
+# then replace the line below verbatim.
 (judge_auth) {
     basic_auth {
-        {$AEGIS_JUDGE_USER:judge} {$AEGIS_JUDGE_PASS_HASH:$2a$14$8faaQn778MEhPf6k2Md7J.HaguTRKo4FG6QXkdRGNDiUlN4Vqljky}
+        judge $2a$14$muxbqODIUTfPwzYWt2tQieX/yDLp8uCXepbupI.RMXh9nY9dVDvKC
     }
 }
 
