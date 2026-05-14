@@ -52,14 +52,17 @@ except ImportError:
 
 API_BASE = "https://api.vultr.com/v2"
 
-# Vultr identifiers (looked up on 2026-05-14):
+# Vultr identifiers (looked up live via /v2/os on 2026-05-14):
 #   region "ewr"  = Piscataway, NJ (New York metro)
 #   region "lax"  = Los Angeles, CA
 #   plan   "vc2-1c-2gb" = Cloud Compute Regular Performance, 1 vCPU / 2 GB / 50 GB, ~$6/mo
-#   os_id  2076  = Ubuntu 24.04 LTS x64
+#   os_id  2284  = Ubuntu 24.04 LTS x64
+# Note: os_id 2076 is Alpine Linux x64 in Vultr's catalog (not Ubuntu).
+# The Apohara Aegis cloud-init script requires apt-get / Debian-family
+# tooling, so we pin to the real Ubuntu 24.04 image (2284).
 REGION = "ewr"
 PLAN = "vc2-1c-2gb"
-OS_ID = 2076
+OS_ID = 2284
 
 # Tag used for idempotency. Re-running the script with the same tag returns
 # the existing instance instead of provisioning a duplicate.
