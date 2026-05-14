@@ -49,6 +49,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from apohara_aegis.defense_chain import DefenseChain, make_default_chain
+from apohara_aegis.gemini_judge import GeminiJudge, make_default_judge
 from apohara_aegis.owasp_regex import match_extended_patterns
 
 # ---------------------------------------------------------------------------
@@ -467,6 +469,12 @@ def run_redteam(
     # defense loop raises midway through (code-review MEDIUM finding,
     # Phase-4 review 2026-05-14: the previous explicit `.close()` at the
     # end of this block was unreachable on exception).
+    #
+    # Phase 2 (2026-05-14 PM) update: this loop now uses
+    # ``DefenseChain`` to run the 3 Aegis layers (regex -> LT -> judge)
+    # in a single call. The LT transport (HTTP vs inspect subprocess) is
+    # selected up-front and adapted into the chain's ``lt_call_fn``
+    # signature. The judge is added as layer 3.
     mode = "live"
     http_client = None
     with contextlib.ExitStack() as stack:
@@ -496,37 +504,100 @@ def run_redteam(
             if from_fallback >= len(attacks) // 2:
                 mode = "simulated_due_to_rate_limit"
 
+        # Build the LT transport adapter for the chain. The chain's
+        # ``lt_call_fn`` signature is ``(prompt) -> dict`` with
+        # ``blocked``/``rule``/``latency_ms``. We adapt the existing
+        # ``defend_live`` / ``defend_inspect`` returns (which use
+        # ``rule_name``) into that shape.
+        lt_call_fn = None
+        if mode != "no_defense_available":
+            if http_client is not None:
+                def lt_call_fn(prompt: str) -> dict:  # type: ignore[misc]
+                    v = defend_live(http_client, lt_endpoint, prompt)
+                    return {
+                        "blocked": bool(v.get("blocked")),
+                        "rule": v.get("rule_name") or "lt_policy_block",
+                        "latency_ms": float(v.get("latency_ms", 0.0)),
+                        "errored": bool(v.get("errored")),
+                        "error": v.get("error"),
+                    }
+            else:
+                def lt_call_fn(prompt: str) -> dict:  # type: ignore[misc]
+                    v = defend_inspect(prompt)
+                    return {
+                        "blocked": bool(v.get("blocked")),
+                        "rule": v.get("rule_name") or "lt_policy_block",
+                        "latency_ms": float(v.get("latency_ms", 0.0)),
+                        "errored": bool(v.get("errored")),
+                        "error": v.get("error"),
+                    }
+
+        # Construct the judge once. ``make_default_judge`` falls back to
+        # ``path="unavailable"`` fail-open if GEMINI_API_KEY is not set.
+        judge = make_default_judge()
+        chain: DefenseChain = make_default_chain(
+            judge=judge,
+            lt_call_fn=lt_call_fn,
+        )
+
         defense_log_path = LOGS_DIR / f"redteam_defense_{timestamp}.jsonl"
         results: list[dict[str, Any]] = []
         with defense_log_path.open("w", encoding="utf-8") as dlog:
             for atk in attacks:
-                # Layer 1: Aegis OWASP regex pre-filter. Runs first because
-                # it is deterministic, sub-millisecond, and short-circuits
-                # the LT round-trip when an OWASP-derived pattern matches.
-                aegis_verdict = defend_aegis_regex(atk["prompt"])
-                if aegis_verdict["blocked"]:
-                    verdict = aegis_verdict
+                # Run the full 3-layer chain. Early-stop on first block.
+                cv = chain.evaluate(atk["prompt"])
+
+                # Translate the rich ChainVerdict back into the legacy
+                # per-row shape (blocked, rule_name, latency_ms,
+                # defended_by) the rest of this script expects. The
+                # full chain attribution is preserved in the
+                # ``chain_verdict`` sub-key so downstream JSON
+                # consumers can break down by layer.
+                # Map the chain's three "defended_by" tokens onto the
+                # existing harness labels so AUDIT-style by_defense_layer
+                # aggregates remain backward-compatible:
+                #   aegis_regex  -> aegis_regex_layer
+                #   lobstertrap  -> lobstertrap
+                #   gemini_judge -> gemini_judge
+                #   none         -> none
+                if cv.defended_by == "aegis_regex":
                     defended_by = "aegis_regex_layer"
-                elif mode == "no_defense_available":
-                    # Layer 2 unavailable; Aegis didn't catch it -> pass.
-                    verdict = {
-                        "blocked": False, "rule_name": None,
-                        "latency_ms": aegis_verdict["latency_ms"],
-                        "errored": True,
-                        "error": "no defense backend available",
-                    }
-                    defended_by = "none"
                 else:
-                    # Layer 2: Lobster Trap (live HTTP or inspect subproc).
-                    if http_client is not None:
-                        verdict = defend_live(
-                            http_client, lt_endpoint, atk["prompt"]
-                        )
-                    else:
-                        verdict = defend_inspect(atk["prompt"])
-                    defended_by = (
-                        "lobstertrap" if verdict.get("blocked") else "none"
-                    )
+                    defended_by = cv.defended_by
+
+                verdict = {
+                    "blocked": cv.blocked,
+                    "rule_name": (
+                        (f"aegis:{cv.rule}" if cv.defended_by == "aegis_regex"
+                         else (cv.rule or None))
+                        if cv.blocked else None
+                    ),
+                    "latency_ms": cv.total_latency_ms,
+                    "errored": False,
+                }
+                # ``chain_verdict`` records the per-layer trace for
+                # JSON consumers. ``judge_verdict`` is included
+                # verbatim when the judge ran.
+                chain_record = {
+                    "blocked": cv.blocked,
+                    "defended_by": cv.defended_by,
+                    "rule": cv.rule,
+                    "confidence": cv.confidence,
+                    "total_latency_ms": cv.total_latency_ms,
+                    "layer_latencies": cv.layer_latencies,
+                }
+                if cv.judge_verdict is not None:
+                    chain_record["judge_verdict"] = {
+                        "is_harmful": cv.judge_verdict.is_harmful,
+                        "confidence": cv.judge_verdict.confidence,
+                        "category": cv.judge_verdict.category,
+                        "reason": cv.judge_verdict.reason,
+                        "model": cv.judge_verdict.model,
+                        "path": cv.judge_verdict.path,
+                        "latency_ms": cv.judge_verdict.latency_ms,
+                        "error": cv.judge_verdict.error,
+                    }
+
                 # Defense-in-depth sanitize: ``atk["prompt"]`` is already
                 # sanitized at generation time, but re-applying ``_sanitize``
                 # here is idempotent and protects against any future code
@@ -535,6 +606,7 @@ def run_redteam(
                 row = {**atk, **verdict,
                        "prompt": _sanitize(atk["prompt"]),
                        "defended_by": defended_by,
+                       "chain_verdict": chain_record,
                        "evaluated_at":
                        datetime.now(timezone.utc).isoformat()}
                 results.append(row)
