@@ -134,6 +134,29 @@ FALLBACK_ATTACKS: dict[str, list[str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Control-char sanitization for JSONL writes
+# ---------------------------------------------------------------------------
+
+# C0 control chars (excluding \t \n), DEL, zero-width and bidi-override
+# unicode that can mislead an operator reading the JSONL files in a terminal.
+# Security-review RECOMMEND-CHANGE §5 (Phase-4 review 2026-05-14).
+_CTRL_CHARS_RE = re.compile(
+    r"[\x00-\x08\x0b-\x1f\x7f​-‏‪-‮⁦-⁩]"
+)
+
+
+def _sanitize(text: str) -> str:
+    """Strip control chars + zero-width / bidi overrides from a prompt.
+
+    Persisted attacker prompts could embed ANSI escapes or bidi-override
+    unicode that lies to an operator running ``cat logs/redteam_*.jsonl``
+    in a real terminal. We strip them at write time. Preserves ``\\t`` /
+    ``\\n`` / normal punctuation. Security-review RECOMMEND-CHANGE §5.
+    """
+    return _CTRL_CHARS_RE.sub("", text)
+
+
+# ---------------------------------------------------------------------------
 # Gemini generation phase
 # ---------------------------------------------------------------------------
 
@@ -383,9 +406,12 @@ def run_redteam(
                     pool = FALLBACK_ATTACKS[category]
                     prompt_text = pool[i % len(pool)]
                     source = "fallback_corpus"
+                # _sanitize strips control chars / bidi / zero-width unicode
+                # so logs/redteam_*.jsonl is safe to `cat` in a terminal.
+                # Security-review RECOMMEND-CHANGE §5 (Phase-4 review).
                 entry = {
                     "category": category,
-                    "prompt": prompt_text,
+                    "prompt": _sanitize(prompt_text),
                     "source": source,
                     "index_in_category": i,
                     "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -443,7 +469,14 @@ def run_redteam(
                     verdict = defend_live(http_client, lt_endpoint, atk["prompt"])
                 else:
                     verdict = defend_inspect(atk["prompt"])
-                row = {**atk, **verdict, "evaluated_at":
+                # Defense-in-depth sanitize: ``atk["prompt"]`` is already
+                # sanitized at generation time, but re-applying ``_sanitize``
+                # here is idempotent and protects against any future code
+                # path that mutates the prompt between generation and
+                # defense logging. Security-review RECOMMEND-CHANGE §5.
+                row = {**atk, **verdict,
+                       "prompt": _sanitize(atk["prompt"]),
+                       "evaluated_at":
                        datetime.now(timezone.utc).isoformat()}
                 results.append(row)
                 dlog.write(json.dumps(row, ensure_ascii=False) + "\n")
