@@ -28,6 +28,30 @@
 
 ---
 
+### Quickstart for enterprise operators
+
+Deploy the full Lobster Trap + Aegis governance stack in one command.
+The policy pack ships a pre-configured 9-rule ingress / 2-rule egress
+YAML policy, an operator README, and a CISO-readable threat model summary.
+
+```bash
+# Download the pack and review before running (recommended):
+wget https://github.com/SuarezPM/apohara-aegis/releases/latest/download/pack.tar.gz
+tar -xzf pack.tar.gz && cat install.sh && ./install.sh
+```
+
+Or curl directly (review the script first at the URL above):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/SuarezPM/apohara-aegis/main/policy-pack/install.sh | bash
+```
+
+Prereqs: Python 3.11+, Go 1.22+ (to build Lobster Trap from source), curl, git.
+See [`policy-pack/README.md`](policy-pack/README.md) for the full operator guide,
+`curl`-based attack verification, and production hardening checklist.
+
+---
+
 ## What Apohara Aegis catches that no one else does
 
 A 5-agent LLM workflow has two failure modes, and **no single tool catches both**:
