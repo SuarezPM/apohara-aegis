@@ -22,6 +22,15 @@ Auth: ``Authorization: Bearer $VULTR_API_KEY`` header on every request.
 
 Honesty contract: this script does NOT store the API key anywhere. It reads
 from the ``VULTR_API_KEY`` env var only and aborts if absent.
+
+Phase-4 hardening (2026-05-14): the cloud-init YAML now requires an
+operator SSH public key (``AEGIS_SSH_PUBKEY`` env var, full ``ssh-ed25519
+...`` line). The script substitutes the placeholder before
+base64-encoding the YAML and aborts BEFORE any Vultr API call if the
+env var is unset — there is no silent fallback to root + password auth.
+Judge basicauth credentials (``AEGIS_JUDGE_USER`` /
+``AEGIS_JUDGE_PASS_HASH``) are also propagated; when unset, Caddy falls
+back to the baked-in defaults documented in deploy/README.md.
 """
 from __future__ import annotations
 
@@ -124,14 +133,51 @@ def find_instance_by_tag(api_key: str, tag: str) -> Optional[dict]:
 
 
 def load_user_data() -> str:
-    """Read deploy/cloud-init.yaml from the same directory as this script."""
+    """Read deploy/cloud-init.yaml and substitute operator env vars.
+
+    Performs three placeholder substitutions on the raw YAML before
+    returning it:
+
+    1. ``AEGIS_SSH_PUBKEY_PLACEHOLDER``      -> $AEGIS_SSH_PUBKEY (required).
+    2. ``AEGIS_JUDGE_USER_PLACEHOLDER``      -> $AEGIS_JUDGE_USER (optional, default empty).
+    3. ``AEGIS_JUDGE_PASS_HASH_PLACEHOLDER`` -> $AEGIS_JUDGE_PASS_HASH (optional, default empty).
+
+    Honesty contract: the SSH pubkey is hard-required. If
+    ``AEGIS_SSH_PUBKEY`` is unset the function raises with an actionable
+    error message BEFORE the caller hits the Vultr API — there is no
+    silent fallback to root + password auth.
+    """
     path = Path(__file__).resolve().parent / "cloud-init.yaml"
     if not path.exists():
         raise FileNotFoundError(
             f"cloud-init.yaml not found at {path}. "
             f"This script expects it next to itself."
         )
-    return path.read_text(encoding="utf-8")
+
+    raw = path.read_text(encoding="utf-8")
+
+    pubkey = os.environ.get("AEGIS_SSH_PUBKEY", "").strip()
+    if not pubkey:
+        raise RuntimeError(
+            "AEGIS_SSH_PUBKEY env var is not set. Phase-4 hardening "
+            "requires an operator SSH public key — root login and "
+            "password auth are disabled in the cloud-init template, so "
+            "without a pubkey you would lock yourself out.\n"
+            "Fix:\n"
+            "    export AEGIS_SSH_PUBKEY=\"$(cat ~/.ssh/id_ed25519.pub)\"\n"
+            "Then re-run this script."
+        )
+
+    raw = raw.replace("AEGIS_SSH_PUBKEY_PLACEHOLDER", pubkey)
+    raw = raw.replace(
+        "AEGIS_JUDGE_USER_PLACEHOLDER",
+        os.environ.get("AEGIS_JUDGE_USER", "").strip(),
+    )
+    raw = raw.replace(
+        "AEGIS_JUDGE_PASS_HASH_PLACEHOLDER",
+        os.environ.get("AEGIS_JUDGE_PASS_HASH", "").strip(),
+    )
+    return raw
 
 
 def create_instance(api_key: str) -> dict:

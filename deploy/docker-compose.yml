@@ -34,6 +34,11 @@ services:
     container_name: aegis-mock-llm
     restart: unless-stopped
     networks: [aegisnet]
+    # Phase-4 hardening (2026-05-14): drop root. uid 65532 == distroless
+    # "nonroot" convention; matches the lobstertrap upstream image. The
+    # mock-llm has no volumes and only needs to run a stock python3
+    # binary (world-executable), so a non-root user works out of the box.
+    user: "65532:65532"
     # Inline server: a 50-line FastAPI-free stdlib BaseHTTPServer that
     # speaks the bare minimum of OpenAI's /v1/chat/completions API.
     # Lives in the same compose file (not a separate Dockerfile) to keep
@@ -128,11 +133,16 @@ services:
     depends_on:
       - lobstertrap
     working_dir: /opt/apohara-aegis
+    # Phase-4 hardening (2026-05-14): drop root. uid 65532 matches the
+    # distroless "nonroot" convention. `pip install --user` goes to
+    # PYTHONUSERBASE on tmpfs so we do not need to chown the
+    # /usr/local/lib/python3.11/site-packages dir. The bind-mounted
+    # repo is rw because the JBB defense script writes JSON reports to
+    # logs/; cloud-init chmods that dir 1777 (sticky world-write) so a
+    # non-root uid in the container can persist evidence files.
+    user: "65532:65532"
     volumes:
-      # Mount the entire repo into the container (read-write so logs/ can
-      # persist via the named volume below).
       - ..:/opt/apohara-aegis
-      - apohara-aegis-logs:/opt/apohara-aegis/logs
     environment:
       LOBSTERTRAP_ENDPOINT: "http://lobstertrap:8080"
       PYTHONPATH: "/opt/apohara-aegis"
@@ -140,12 +150,21 @@ services:
       GRADIO_SERVER_PORT: "7860"
       # Tell Gradio that it's running behind a reverse proxy at /.
       GRADIO_ROOT_PATH: ""
+      # `pip install --user` destination — writable tmpfs path.
+      HOME: "/tmp/aegis-home"
+      PYTHONUSERBASE: "/tmp/aegis-pip"
+      PATH: "/tmp/aegis-pip/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    tmpfs:
+      # User home + pip --user prefix. Ephemeral; recreated each restart.
+      - /tmp/aegis-home:uid=65532,gid=65532,mode=0700
+      - /tmp/aegis-pip:uid=65532,gid=65532,mode=0700
     command:
       - bash
       - -c
       - |
         set -e
-        pip install --no-cache-dir -q -r /opt/apohara-aegis/requirements.txt
+        pip install --user --no-cache-dir -q \
+          -r /opt/apohara-aegis/requirements.txt
         exec python3 /opt/apohara-aegis/scripts/jbb_live_defense.py
     expose:
       - "7860"
@@ -166,6 +185,13 @@ services:
       # (e.g. "1.2.3.4.nip.io"). Caddy auto-provisions a Let's Encrypt
       # certificate for that hostname.
       AEGIS_SITE: "${AEGIS_SITE:-localhost}"
+      # Judge basicauth (Phase-4 hardening, 2026-05-14). cloud-init
+      # propagates AEGIS_JUDGE_USER / AEGIS_JUDGE_PASS_HASH from
+      # operator env into deploy/.env so docker compose passes them
+      # through to Caddy. Falls back to the baked-in defaults in the
+      # Caddyfile when unset.
+      AEGIS_JUDGE_USER: "${AEGIS_JUDGE_USER:-judge}"
+      AEGIS_JUDGE_PASS_HASH: "${AEGIS_JUDGE_PASS_HASH:-}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ../assets:/srv/audit:ro
@@ -177,6 +203,8 @@ networks:
     driver: bridge
 
 volumes:
-  apohara-aegis-logs:
+  # apohara-aegis-logs removed in Phase-4 hardening (2026-05-14): logs
+  # now persist directly in /opt/apohara-aegis/logs on the host (chmod
+  # 1777 by cloud-init), readable via `ssh aegis@<IP>` for evidence.
   caddy_data:
   caddy_config:

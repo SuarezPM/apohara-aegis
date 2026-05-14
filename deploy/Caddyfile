@@ -3,6 +3,17 @@
 # {$AEGIS_SITE} is substituted by Caddy from the AEGIS_SITE env var (set
 # by cloud-init to "<publicIP>.nip.io"). Using nip.io wildcard DNS lets
 # Let's Encrypt issue a real TLS cert without any DNS configuration.
+#
+# Security posture (Phase-4 reviewer hardening, 2026-05-14):
+#   - Everything except /audit is behind judge basicauth.
+#   - Credentials default to "judge" / "apohara-aegis-techex-2026"
+#     (bcrypt $14 hash baked in below) so a fresh build / validate
+#     works out of the box. Operators override at deploy time by
+#     exporting AEGIS_JUDGE_USER and AEGIS_JUDGE_PASS_HASH (the value
+#     of `caddy hash-password --plaintext '...'`) — see deploy/README.md
+#     "Security posture" section.
+#   - /audit is intentionally public so the static governance dashboard
+#     remains a 1-click link in the submission.
 
 {
     # Operator contact for ACME — keeps Let's Encrypt happy.
@@ -14,11 +25,23 @@
     }
 }
 
-{$AEGIS_SITE} {
+# Reusable basicauth snippet for the judge interface. The bcrypt hash
+# baked in is for password ``apohara-aegis-techex-2026``; override at
+# deploy time via AEGIS_JUDGE_PASS_HASH (the output of
+# ``caddy hash-password --plaintext '<your-password>'``).
+(judge_auth) {
+    basic_auth {
+        {$AEGIS_JUDGE_USER:judge} {$AEGIS_JUDGE_PASS_HASH:$2a$14$8faaQn778MEhPf6k2Md7J.HaguTRKo4FG6QXkdRGNDiUlN4Vqljky}
+    }
+}
 
-    # ---- /audit -> static governance dashboard HTML --------------------
+{$AEGIS_SITE:localhost} {
+
+    # ---- /audit -> static governance dashboard HTML (PUBLIC) -----------
     # /srv/audit is the repo's assets/ directory mounted read-only into
     # caddy by docker-compose. The file is inv15-governance-dashboard.html.
+    # Intentionally NOT behind basicauth: judges and journalists need a
+    # bookmarkable governance link without credentials.
     handle /audit {
         root * /srv/audit
         rewrite * /inv15-governance-dashboard.html
@@ -30,19 +53,21 @@
         file_server
     }
 
-    # ---- /lt/* -> Lobster Trap proxy on :8080 ---------------------------
+    # ---- /lt/* -> Lobster Trap proxy on :8080 (BEHIND JUDGE BASIC AUTH) -
     # We strip the /lt prefix so the upstream sees /v1/chat/completions
-    # at its root. Useful for judges who want to hit the proxy directly
-    # with curl via the public URL.
+    # at its root. basic_auth keeps the open chat-completions endpoint
+    # off of unauthenticated drive-by scanners.
     handle_path /lt/* {
+        import judge_auth
         reverse_proxy lobstertrap:8080
     }
 
-    # ---- / -> Gradio aegis-ui ------------------------------------------
+    # ---- / -> Gradio aegis-ui (BEHIND JUDGE BASIC AUTH) ----------------
     # Gradio uses websockets and event streams; the headers below are
     # required for the UI's real-time progress updates to work behind a
     # reverse proxy.
     handle {
+        import judge_auth
         reverse_proxy aegis-ui:7860 {
             header_up Host {host}
             header_up X-Real-IP {remote_host}

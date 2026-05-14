@@ -9,6 +9,35 @@
 # Cost note: this instance runs 24/7 at ~$0.20/day. Tear down via
 # `python3 deploy/vultr_provision.py --destroy` when the demo window
 # (May 14-26, 2026) closes.
+#
+# Security posture (Phase-4 reviewer hardening, 2026-05-14):
+#   - Root password login is disabled; root SSH is disabled.
+#   - A non-root sudoer ``aegis`` is created with a single SSH pubkey
+#     read from the AEGIS_SSH_PUBKEY env var by vultr_provision.py.
+#     If AEGIS_SSH_PUBKEY is unset at provision time, the provisioner
+#     aborts BEFORE any Vultr API call — there is no silent fallback
+#     to password auth.
+#   - Judge basicauth credentials are passed in via env (AEGIS_JUDGE_USER
+#     / AEGIS_JUDGE_PASS_HASH) and propagated to docker-compose via
+#     /opt/apohara-aegis/deploy/.env. Default values in deploy/Caddyfile
+#     are documented in deploy/README.md "Security posture".
+
+# ---- Disable root login + password auth -----------------------------------
+disable_root: true
+ssh_pwauth: false
+
+# ---- Create non-root sudoer user with operator SSH pubkey -----------------
+# AEGIS_SSH_PUBKEY_PLACEHOLDER is replaced by vultr_provision.py at
+# provision time with the contents of the AEGIS_SSH_PUBKEY env var.
+# Vultr base64-encodes the substituted YAML and feeds it to cloud-init.
+users:
+  - name: aegis
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    shell: /bin/bash
+    groups: [docker, sudo]
+    lock_passwd: true
+    ssh_authorized_keys:
+      - AEGIS_SSH_PUBKEY_PLACEHOLDER
 
 package_update: true
 package_upgrade: false  # avoid 5-minute kernel upgrade on first boot
@@ -65,6 +94,13 @@ write_files:
         git -C /opt/apohara-aegis reset --hard origin/main || true
       fi
 
+      # Make logs/ world-writable so the non-root aegis-ui container
+      # (uid 65532) can persist JBB defense reports. The rest of the repo
+      # stays at the cloned default ownership. Phase-4 hardening
+      # (2026-05-14): aegis-ui no longer runs as root.
+      mkdir -p /opt/apohara-aegis/logs
+      chmod 1777 /opt/apohara-aegis/logs
+
       # ----- 3. Discover public IP for Caddy site address --------------------
       # nip.io maps <ip>.nip.io -> <ip> via wildcard DNS, so Let's Encrypt
       # auto-issues a certificate without us configuring real DNS.
@@ -75,7 +111,16 @@ write_files:
 
       mkdir -p /opt/apohara-aegis/deploy
       # AEGIS_SITE is consumed by Caddyfile via env-var substitution.
-      echo "AEGIS_SITE=${PUBLIC_IP}.nip.io" >/opt/apohara-aegis/deploy/.env
+      # AEGIS_JUDGE_USER / AEGIS_JUDGE_PASS_HASH are substituted by
+      # vultr_provision.py from the equally named env vars before this
+      # YAML is shipped to cloud-init. Defaults are intentionally
+      # left empty here so Caddy falls back to the baked-in defaults
+      # in deploy/Caddyfile when an operator forgot to set them.
+      cat >/opt/apohara-aegis/deploy/.env <<EOF
+      AEGIS_SITE=${PUBLIC_IP}.nip.io
+      AEGIS_JUDGE_USER=AEGIS_JUDGE_USER_PLACEHOLDER
+      AEGIS_JUDGE_PASS_HASH=AEGIS_JUDGE_PASS_HASH_PLACEHOLDER
+      EOF
 
       # ----- 4. Firewall (UFW): only 22, 80, 443 inbound ---------------------
       echo "[4/5] Configuring UFW..."
@@ -104,3 +149,5 @@ final_message: |
   Apohara Aegis cloud-init bootstrap finished at $TIMESTAMP after $UPTIME seconds.
   Tail /var/log/apohara-aegis-bootstrap.log to verify docker compose came up.
   The public URL is https://<IP>.nip.io/ — Caddy TLS issuance takes ~30s on first hit.
+  Judge basicauth is enabled on / and /lt/* (only /audit is public).
+  SSH as: ssh aegis@<IP> (root login is disabled).

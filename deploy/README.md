@@ -26,6 +26,15 @@ caddy (:80,:443)  ──┬── aegis-ui (:7860, Gradio)
 
 ```bash
 export VULTR_API_KEY='<paste-key-from-vultr-panel>'
+# Required: SSH pubkey that will be the only way into the box.
+# (Root + password auth are disabled in cloud-init.)
+export AEGIS_SSH_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)"
+
+# Optional: judge basicauth credentials. Defaults to
+# user=judge / password=apohara-aegis-techex-2026 if unset.
+# export AEGIS_JUDGE_USER='judge'
+# export AEGIS_JUDGE_PASS_HASH="$(docker run --rm caddy:2.8 caddy hash-password --plaintext 'your-password')"
+
 python3 deploy/vultr_provision.py
 ```
 
@@ -108,6 +117,40 @@ Do **not**:
 
 - Submit real personal information — your prompts are logged on disk.
 - Treat the canned mock-llm response as a Gemini/GPT/Claude output.
+
+## Security posture
+
+The Phase-4 reviewer pass (2026-05-14) tightened the deploy/* stack on
+three axes. The current live URL `https://144.202.8.58.nip.io/` was
+provisioned **before** these commits and therefore predates the
+hardening; re-provisioning (`vultr_provision.py --destroy` then re-run)
+is what activates the controls below. The honest disposition is
+tracked in `AUDIT.md` entry #7.
+
+| Control | What | Where |
+| ------- | ---- | ----- |
+| SSH key-only login | `disable_root: true`, `ssh_pwauth: false`, a non-root sudoer `aegis` carrying a single pubkey read from `AEGIS_SSH_PUBKEY` at provision time. Provisioner aborts BEFORE the Vultr API call if the env var is unset (no silent fallback to root + password). | `cloud-init.yaml`, `vultr_provision.py::load_user_data` |
+| Non-root containers | `user: "65532:65532"` on `mock-llm` and `aegis-ui` (lobstertrap is already distroless-nonroot upstream). `aegis-ui` writes Python deps to a tmpfs `PYTHONUSERBASE` and logs to a host dir chmod-1777 by cloud-init. | `docker-compose.yml`, `cloud-init.yaml` |
+| Judge basicauth | Caddy `basic_auth` on `/` and `/lt/*`. `/audit` (static governance dashboard) stays public. Credentials default to `judge` / `apohara-aegis-techex-2026`; override via `AEGIS_JUDGE_USER` + `AEGIS_JUDGE_PASS_HASH` env vars at provision time. | `Caddyfile`, `docker-compose.yml::caddy.environment` |
+
+Override path (judge basicauth password):
+
+```bash
+# Generate a bcrypt hash for your chosen password (caddy:2.8 image).
+docker run --rm caddy:2.8 caddy hash-password --plaintext 'your-strong-password'
+
+# Export both vars before running the provisioner.
+export AEGIS_JUDGE_USER='judge'
+export AEGIS_JUDGE_PASS_HASH='$2a$14$...the-hash-output-above...'
+
+python3 deploy/vultr_provision.py
+```
+
+Honesty note on the current live URL: it remains world-readable
+without basicauth until the next re-provision, because re-provisioning
+destroys the existing Let's Encrypt certificate (we are on the LE
+production rate-limit budget for `*.nip.io`). The hardening above is
+queued for the May 19, 2026 final-judging refresh — see AUDIT.md #7.
 
 ## Files in this directory
 
