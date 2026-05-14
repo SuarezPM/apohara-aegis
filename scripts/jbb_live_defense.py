@@ -718,6 +718,10 @@ def _parse_cli_args() -> argparse.Namespace:
                    help=f"GeminiJudge confidence threshold for block "
                         f"(default {CALIBRATED_JUDGE_THRESHOLD}, the "
                         f"calibrated value).")
+    p.add_argument("--exclude-first-n", type=int, default=0,
+                   help="Skip the first N indices of the seed-shuffled "
+                        "JBB-Behaviors split — used to hold the "
+                        "calibration set out of the full-run measurement.")
     p.add_argument("--out", type=Path,
                    default=Path("logs") /
                    f"jbb_defense_{int(time.time())}.json",
@@ -729,6 +733,8 @@ if __name__ == "__main__":
     args = _parse_cli_args()
     if args.headless or args.batch is not None:
         n = args.batch if args.batch is not None else MAX_PROMPTS
+        excluded = (set(range(args.exclude_first_n))
+                    if args.exclude_first_n > 0 else None)
         try:
             run_headless(
                 n_prompts=n,
@@ -736,6 +742,7 @@ if __name__ == "__main__":
                 simulate=args.simulate,
                 seed=args.seed,
                 judge_threshold=args.judge_threshold,
+                excluded_indices=excluded,
             )
         except KeyboardInterrupt:
             print("Interrupted by user.", file=sys.stderr)
