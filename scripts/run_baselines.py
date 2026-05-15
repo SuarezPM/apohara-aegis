@@ -11,16 +11,43 @@ Supported ``--baseline`` values
 ==============================
 
 1. ``aegis-ensemble``                     — full chain w/ EnsembleJudge
-2. ``aegis-single-gemini``                — Phase-2 single-judge baseline
-3. ``gemini-3.1-pro``                     — Gemini AS A SINGLE JUDGE (no chain)
-4. ``claude-opus-4.7``                    — ClaudeOpus47Adapter alone
-5. ``gpt-5.5``                            — GPT55Adapter alone
-6. ``minimax-m2.7``                       — MiniMaxM27Adapter alone
-7. ``groq-gpt-oss-safeguard``             — Groq defense, alone
-8. ``groq-llama-prompt-guard``            — Groq defense, alone
-9. ``nvidia-llama-guard-4-12b``           — NVIDIA NIM, alone
-10. ``nvidia-nemoguard-content-safety-8b`` — NVIDIA NIM, alone
-11. ``nvidia-nemotron-content-safety-reasoning-4b`` — NVIDIA NIM, alone
+                                            (now the Day-4 10-frontier
+                                            default per commit ``e9b66f4``).
+2. ``aegis-ensemble-10frontier``           — alias for ``aegis-ensemble``
+                                            emphasizing the Day-4 wiring
+                                            (kept distinct so the Day-3
+                                            6-vendor ensemble JSON in
+                                            ``logs/`` stays
+                                            distinguishable from the
+                                            Day-4 10-vendor JSON in
+                                            file-system listings).
+3. ``aegis-single-gemini``                — Phase-2 single-judge baseline.
+4. ``gemini-3.1-pro``                     — Gemini AS A SINGLE JUDGE.
+5. ``claude-opus-4.7``                    — ClaudeOpus47Adapter alone.
+6. ``gpt-5.5``                            — GPT55Adapter alone.
+7. ``minimax-m2.7``                       — MiniMaxM27Adapter alone.
+8. ``groq-gpt-oss-safeguard``             — Groq defense, alone.
+9. ``groq-llama-prompt-guard``            — Groq defense, alone.
+10. ``nvidia-llama-guard-4-12b``           — NVIDIA NIM, alone.
+11. ``nvidia-nemoguard-content-safety-8b`` — NVIDIA NIM, alone.
+12. ``nvidia-nemotron-content-safety-reasoning-4b`` — NVIDIA NIM, alone.
+
+Day-4 frontier additions (2026-05-15, commits ``a4fbce0`` + ``feb329a`` +
+this commit's wiring change):
+
+13. ``openrouter-deepseek-v4-pro``         — DeepSeek V4 Pro via OpenRouter.
+14. ``openrouter-kimi-k2.6``               — Moonshot Kimi K2.6 via OpenRouter.
+15. ``openrouter-glm-5.1``                 — Z.ai GLM 5.1 via OpenRouter.
+16. ``openrouter-qwen3.6-plus``            — Alibaba Qwen 3.6 Plus via
+                                            OpenRouter.
+17. ``openrouter-nemotron-3-super-120b``   — NVIDIA Nemotron 3 Super 120B
+                                            A12B via OpenRouter.
+18. ``opencode-zen-big-pickle``            — opencode Zen Big Pickle
+                                            stealth tier (live probe
+                                            2026-05-15 shows the
+                                            underlying model is
+                                            DeepSeek-V4-Flash, NOT
+                                            GLM-4.6).
 
 Determinism contract
 ====================
@@ -285,6 +312,16 @@ def _make_adapter(baseline: str):
         NvidiaLlamaGuard4Adapter, NvidiaNeMoguardContentSafety8BAdapter,
         NvidiaNemotronSafetyReasoning4BAdapter,
     )
+    from apohara_aegis.opencode_zen_adapters import (  # noqa: PLC0415
+        OpencodeZenBigPickleAdapter,
+    )
+    from apohara_aegis.openrouter_adapters import (  # noqa: PLC0415
+        OpenRouterDeepSeekV4ProAdapter,
+        OpenRouterGLM51Adapter,
+        OpenRouterKimiK26Adapter,
+        OpenRouterNemotron3Super120BAdapter,
+        OpenRouterQwen36PlusAdapter,
+    )
     table = {
         "gemini-3.1-pro": GeminiAIStudioAdapter,
         "claude-opus-4.7": ClaudeOpus47Adapter,
@@ -297,16 +334,33 @@ def _make_adapter(baseline: str):
             NvidiaNeMoguardContentSafety8BAdapter,
         "nvidia-nemotron-content-safety-reasoning-4b":
             NvidiaNemotronSafetyReasoning4BAdapter,
+        # Day-4 frontier additions (commits a4fbce0 + feb329a + e9b66f4).
+        "openrouter-deepseek-v4-pro": OpenRouterDeepSeekV4ProAdapter,
+        "openrouter-kimi-k2.6": OpenRouterKimiK26Adapter,
+        "openrouter-glm-5.1": OpenRouterGLM51Adapter,
+        "openrouter-qwen3.6-plus": OpenRouterQwen36PlusAdapter,
+        "openrouter-nemotron-3-super-120b":
+            OpenRouterNemotron3Super120BAdapter,
+        "opencode-zen-big-pickle": OpencodeZenBigPickleAdapter,
     }
     return table[baseline]()
 
 
-CHAIN_BASELINES = {"aegis-ensemble", "aegis-single-gemini"}
+CHAIN_BASELINES = {
+    "aegis-ensemble",
+    "aegis-ensemble-10frontier",  # Day-4 alias — same chain, different
+                                  # output-file prefix for log archaeology.
+    "aegis-single-gemini",
+}
 SINGLE_BASELINES = {
     "gemini-3.1-pro", "claude-opus-4.7", "gpt-5.5", "minimax-m2.7",
     "groq-gpt-oss-safeguard", "groq-llama-prompt-guard",
     "nvidia-llama-guard-4-12b", "nvidia-nemoguard-content-safety-8b",
     "nvidia-nemotron-content-safety-reasoning-4b",
+    # Day-4 frontier additions.
+    "openrouter-deepseek-v4-pro", "openrouter-kimi-k2.6",
+    "openrouter-glm-5.1", "openrouter-qwen3.6-plus",
+    "openrouter-nemotron-3-super-120b", "opencode-zen-big-pickle",
 }
 ALL_BASELINES = sorted(CHAIN_BASELINES | SINGLE_BASELINES)
 
@@ -331,7 +385,14 @@ def run_baseline(
         raise ValueError(f"unknown dataset: {dataset}")
 
     # Choose the runner
-    if baseline == "aegis-ensemble":
+    if baseline in ("aegis-ensemble", "aegis-ensemble-10frontier"):
+        # Same chain runner — the alias is purely for file-system
+        # log archaeology (Day-3 6-vendor ensemble JSONs vs Day-4
+        # 10-vendor JSONs differ only by their filename prefix when
+        # both are committed in `logs/`). The active adapter list
+        # comes from `apohara_aegis.multi_judge.make_default_adapters`,
+        # which Day-4 commit `e9b66f4` redefined to the 10-frontier
+        # roster.
         run_fn = _run_aegis_ensemble
     elif baseline == "aegis-single-gemini":
         run_fn = _run_aegis_single_gemini
@@ -390,7 +451,7 @@ def run_baseline(
     if baseline in SINGLE_BASELINES:
         adapter_obj = run_fn.__closure__[0].cell_contents  # the adapter
         cost_est = round(getattr(adapter_obj, "cumulative_cost_usd", 0.0), 6)
-    elif baseline == "aegis-ensemble":
+    elif baseline in ("aegis-ensemble", "aegis-ensemble-10frontier"):
         ens = _run_aegis_ensemble._chain.judge
         cost_est = round(
             sum(ad.cumulative_cost_usd for ad in ens.adapters), 6,
