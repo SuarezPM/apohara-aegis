@@ -1,0 +1,177 @@
+{
+  "host": "104.156.224.48",
+  "url_base": "https://104.156.224.48.nip.io",
+  "timestamp_iso": "2026-05-15T19:09:12.383968+00:00",
+  "probes": {
+    "1_gradio_root_basicauth_get": {
+      "url": "https://104.156.224.48.nip.io/",
+      "method": "GET",
+      "http_code": 200,
+      "content_length": 23834,
+      "body_first_2000": "<!doctype html>\n<html\n\tlang=\"en\"\n\tstyle=\"\n\t\tmargin: 0;\n\t\tpadding: 0;\n\t\tmin-height: 100%;\n\t\tdisplay: flex;\n\t\tflex-direction: column;\n\t\"\n>\n\t<head>\n\t\t<meta charset=\"utf-8\" />\n\t\t<meta\n\t\t\tname=\"viewport\"\n\t\t\tcontent=\"width=device-width, initial-scale=1, shrink-to-fit=no\"\n\t\t/>\n\t\t<meta property=\"og:title\" content=\"Gradio\" />\n\t\t<meta property=\"og:type\" content=\"website\" />\n\t\t<meta property=\"og:url\" content=\"{url}\" />\n\t\t<meta property=\"og:description\" content=\"Click to try out the app!\" />\n\t\t<meta\n\t\t\tproperty=\"og:image\"\n\t\t\tcontent=\"https://raw.githubusercontent.com/gradio-app/gradio/main/js/_website/src/lib/assets/img/header-image.jpg\"\n\t\t/>\n\t\t<meta name=\"twitter:card\" content=\"summary_large_image\" />\n\t\t<meta name=\"twitter:creator\" content=\"@Gradio\" />\n\t\t<meta name=\"twitter:title\" content=\"Gradio\" />\n\t\t<meta name=\"twitter:description\" content=\"Click to try out the app!\" />\n\t\t<meta\n\t\t\tname=\"twitter:image\"\n\t\t\tcontent=\"https://raw.githubusercontent.com/gradio-app/gradio/main/js/_website/src/lib/assets/img/header-image.jpg\"\n\t\t/>\n\n\t\t<style>\n\t\t\t:root {\n\t\t\t\t--bg: white;\n\t\t\t\t--col:   #1e293b;\n\t\t\t\t--bg-dark: #0a0f1e;\n\t\t\t\t--col-dark: #f1f5f9;\n\t\t\t}\n\n\n\t\t\tbody {\n\t\t\t\tbackground: var(--bg);\n\t\t\t\tcolor: var(--col);\n\t\t\t\tfont-family: Arial, Helvetica, sans-serif;\n\t\t\t}\n\n\t\t\t@media (prefers-color-scheme: dark) {\n\t\t\t\tbody {\n\t\t\t\t\tbackground: var(--bg-dark);\n\t\t\t\t\tcolor: var(--col-dark);\n\t\t\t\t}\n\t\t\t}\n\t\t</style>\n\n\t\t<meta property=\"og:url\" content=\"https://gradio.app/\" />\n\t\t<meta property=\"og:type\" content=\"website\" />\n\t\t<meta property=\"og:image\" content=\"\" />\n\t\t<meta property=\"og:title\" content=\"Apohara Aegis · JBB Live Defense\" />\n\t\t<meta\n\t\t\tproperty=\"og:description\"\n\t\t\tcontent=\"\"\n\t\t/>\n\t\t<meta name=\"twitter:card\" content=\"summary_large_image\" />\n\t\t<meta name=\"twitter:creator\" content=\"@teamGradio\" />\n\t\t<meta name=\"twitter:title\" content=\"Apohara Aegis · JBB Live Defense\" />\n\t\t<meta\n\t\t\tname=\"twitter:description\"\n\t\t\tcontent=\"\"\n\t\t/>\n\t\t<meta name=\"twitter:image\" content=\"\" />\n\n\t\t<script>window.gradio_config ",
+      "latency_ms": 932.2848099982366
+    },
+    "2_audit_public_get": {
+      "url": "https://104.156.224.48.nip.io/audit",
+      "method": "GET",
+      "http_code": 200,
+      "content_length": 18024,
+      "body_first_2000": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"UTF-8\">\n<title>Apohara Aegis — INV-15 Governance Dashboard</title>\n<style>\n  :root {\n    --bg:        #0f172a;\n    --surface:   #1e293b;\n    --border:    #334155;\n    --text:      #f8fafc;\n    --muted:     #94a3b8;\n    --accent:    #ef4444;\n    --green:     #22c55e;\n    --yellow:    #fbbf24;\n    --blue:      #3b82f6;\n  }\n  * { box-sizing: border-box; margin: 0; padding: 0; }\n  body {\n    background: var(--bg); color: var(--text);\n    font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", \"DejaVu Sans\", sans-serif;\n    line-height: 1.5; padding: 32px; min-height: 100vh;\n  }\n  header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 32px; }\n  h1 { font-size: 1.7em; color: var(--text); margin-bottom: 6px; }\n  h2 { font-size: 1.15em; color: var(--accent); margin: 28px 0 12px; }\n  .subtitle { color: var(--muted); font-size: 0.95em; }\n  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin: 24px 0; }\n  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }\n  .kpi-label { font-size: 0.8em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }\n  .kpi-value { font-size: 2.2em; font-weight: 800; color: var(--accent); line-height: 1; margin: 8px 0 4px; }\n  .kpi-caption { font-size: 0.75em; color: var(--muted); }\n  .kpi.green .kpi-value { color: var(--green); }\n  .kpi.yellow .kpi-value { color: var(--yellow); }\n  .kpi.blue .kpi-value { color: var(--blue); }\n  table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }\n  th { background: #0f172a; color: var(--muted); padding: 10px 14px; text-align: left; font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); }\n  td { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 0.92em; }\n  tr:last-child td { border-bottom: none;",
+      "latency_ms": 652.9537889873609
+    },
+    "3_lt_inject_post": {
+      "url": "https://104.156.224.48.nip.io/lt/v1/chat/completions",
+      "method": "POST",
+      "http_code": 200,
+      "content_length": 1064,
+      "body_first_2000": "{\"id\":\"lobstertrap-deny\",\"object\":\"chat.completion\",\"created\":0,\"model\":\"\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"[LOBSTER TRAP × ContextForge] Blocked: prompt injection detected. This request was caught by the perimeter layer before reaching the 5-agent pipeline.\"},\"finish_reason\":\"stop\"}],\"_lobstertrap\":{\"request_id\":\"req-3\",\"verdict\":\"DENY\",\"ingress\":{\"detected\":{\"intent_category\":\"general\",\"intent_confidence\":0.5,\"risk_score\":0.75,\"contains_code\":false,\"contains_credentials\":false,\"contains_pii\":false,\"contains_pii_request\":false,\"contains_system_commands\":false,\"contains_malware_request\":false,\"contains_phishing_patterns\":false,\"contains_role_impersonation\":false,\"contains_exfiltration\":false,\"contains_harm_patterns\":false,\"contains_obfuscation\":true,\"contains_injection_patterns\":true,\"contains_file_paths\":false,\"contains_sensitive_paths\":false,\"contains_urls\":false,\"target_paths\":null,\"target_domains\":null,\"target_commands\":null,\"token_count\":14},\"mismatches\":[],\"action\":\"DENY\",\"rule_name\":\"block_prompt_injection\"}}}\n",
+      "body_json": {
+        "id": "lobstertrap-deny",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "",
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "[LOBSTER TRAP × ContextForge] Blocked: prompt injection detected. This request was caught by the perimeter layer before reaching the 5-agent pipeline."
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "_lobstertrap": {
+          "request_id": "req-3",
+          "verdict": "DENY",
+          "ingress": {
+            "detected": {
+              "intent_category": "general",
+              "intent_confidence": 0.5,
+              "risk_score": 0.75,
+              "contains_code": false,
+              "contains_credentials": false,
+              "contains_pii": false,
+              "contains_pii_request": false,
+              "contains_system_commands": false,
+              "contains_malware_request": false,
+              "contains_phishing_patterns": false,
+              "contains_role_impersonation": false,
+              "contains_exfiltration": false,
+              "contains_harm_patterns": false,
+              "contains_obfuscation": true,
+              "contains_injection_patterns": true,
+              "contains_file_paths": false,
+              "contains_sensitive_paths": false,
+              "contains_urls": false,
+              "target_paths": null,
+              "target_domains": null,
+              "target_commands": null,
+              "token_count": 14
+            },
+            "mismatches": [],
+            "action": "DENY",
+            "rule_name": "block_prompt_injection"
+          }
+        }
+      },
+      "latency_ms": 487.8921369672753
+    },
+    "4_lt_benign_post": {
+      "url": "https://104.156.224.48.nip.io/lt/v1/chat/completions",
+      "method": "POST",
+      "http_code": 200,
+      "content_length": 1852,
+      "body_first_2000": "{\"_lobstertrap\":{\"request_id\":\"req-4\",\"verdict\":\"ALLOW\",\"ingress\":{\"detected\":{\"intent_category\":\"general\",\"intent_confidence\":0.5,\"risk_score\":0,\"contains_code\":false,\"contains_credentials\":false,\"contains_pii\":false,\"contains_pii_request\":false,\"contains_system_commands\":false,\"contains_malware_request\":false,\"contains_phishing_patterns\":false,\"contains_role_impersonation\":false,\"contains_exfiltration\":false,\"contains_harm_patterns\":false,\"contains_obfuscation\":false,\"contains_injection_patterns\":false,\"contains_file_paths\":false,\"contains_sensitive_paths\":false,\"contains_urls\":false,\"target_paths\":null,\"target_domains\":null,\"target_commands\":null,\"token_count\":21},\"mismatches\":[],\"action\":\"ALLOW\",\"rule_name\":\"allow_apohara_5agent_pipeline\"},\"egress\":{\"detected\":{\"intent_category\":\"general\",\"intent_confidence\":0.5,\"risk_score\":0,\"contains_code\":false,\"contains_credentials\":false,\"contains_pii\":false,\"contains_pii_request\":false,\"contains_system_commands\":false,\"contains_malware_request\":false,\"contains_phishing_patterns\":false,\"contains_role_impersonation\":false,\"contains_exfiltration\":false,\"contains_harm_patterns\":false,\"contains_obfuscation\":false,\"contains_injection_patterns\":false,\"contains_file_paths\":false,\"contains_sensitive_paths\":false,\"contains_urls\":false,\"target_paths\":null,\"target_domains\":null,\"target_commands\":null,\"token_count\":41},\"action\":\"LOG\",\"rule_name\":\"log_critic_responses\"}},\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"[mock backend] This is a canned response. The defense layer (Lobster Trap + Aegis policy) is what the TechEx judges are evaluating; the LLM is intentionally stubbed.\"},\"finish_reason\":\"stop\"}],\"created\":1778872152,\"id\":\"mock-llm-1778872152\",\"model\":\"apohara-aegis-mock\",\"object\":\"chat.completion\",\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0,\"total_tokens\":0}}",
+      "body_json": {
+        "_lobstertrap": {
+          "request_id": "req-4",
+          "verdict": "ALLOW",
+          "ingress": {
+            "detected": {
+              "intent_category": "general",
+              "intent_confidence": 0.5,
+              "risk_score": 0,
+              "contains_code": false,
+              "contains_credentials": false,
+              "contains_pii": false,
+              "contains_pii_request": false,
+              "contains_system_commands": false,
+              "contains_malware_request": false,
+              "contains_phishing_patterns": false,
+              "contains_role_impersonation": false,
+              "contains_exfiltration": false,
+              "contains_harm_patterns": false,
+              "contains_obfuscation": false,
+              "contains_injection_patterns": false,
+              "contains_file_paths": false,
+              "contains_sensitive_paths": false,
+              "contains_urls": false,
+              "target_paths": null,
+              "target_domains": null,
+              "target_commands": null,
+              "token_count": 21
+            },
+            "mismatches": [],
+            "action": "ALLOW",
+            "rule_name": "allow_apohara_5agent_pipeline"
+          },
+          "egress": {
+            "detected": {
+              "intent_category": "general",
+              "intent_confidence": 0.5,
+              "risk_score": 0,
+              "contains_code": false,
+              "contains_credentials": false,
+              "contains_pii": false,
+              "contains_pii_request": false,
+              "contains_system_commands": false,
+              "contains_malware_request": false,
+              "contains_phishing_patterns": false,
+              "contains_role_impersonation": false,
+              "contains_exfiltration": false,
+              "contains_harm_patterns": false,
+              "contains_obfuscation": false,
+              "contains_injection_patterns": false,
+              "contains_file_paths": false,
+              "contains_sensitive_paths": false,
+              "contains_urls": false,
+              "target_paths": null,
+              "target_domains": null,
+              "target_commands": null,
+              "token_count": 41
+            },
+            "action": "LOG",
+            "rule_name": "log_critic_responses"
+          }
+        },
+        "choices": [
+          {
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "[mock backend] This is a canned response. The defense layer (Lobster Trap + Aegis policy) is what the TechEx judges are evaluating; the LLM is intentionally stubbed."
+            },
+            "finish_reason": "stop"
+          }
+        ],
+        "created": 1778872152,
+        "id": "mock-llm-1778872152",
+        "model": "apohara-aegis-mock",
+        "object": "chat.completion",
+        "usage": {
+          "prompt_tokens": 0,
+          "completion_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "latency_ms": 494.3486970150843
+    }
+  },
+  "expected": {
+    "1_gradio_root_basicauth_get": "HTTP 200 (Gradio splash)",
+    "2_audit_public_get": "HTTP 200 (governance dashboard html)",
+    "3_lt_inject_post": "HTTP 200 with verdict=DENY (Lobster Trap block_prompt_injection)",
+    "4_lt_benign_post": "HTTP 200 with verdict=ALLOW"
+  },
+  "honesty_note": "Verdicts in probes 3 + 4 are produced by Lobster Trap's regex DPI alone (the /lt/* endpoint does NOT route through the Aegis EnsembleJudge layer — that layer lives inside the Gradio dashboard at /). The injection probe should trigger LT's block_prompt_injection rule; the benign probe should pass through to the mock-llm backend with verdict=ALLOW."
+}
