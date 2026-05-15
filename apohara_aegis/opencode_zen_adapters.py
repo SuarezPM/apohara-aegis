@@ -532,10 +532,139 @@ class OpencodeZenDeepSeekV4FlashAdapter(OpencodeZenAdapter):
     model_id: str = "deepseek-v4-flash-free"
 
 
+# ---------------------------------------------------------------------------
+# Day-5 backup adapters — promoted to PRIMARY for the Kimi / GLM seats
+# (live probes 2026-05-15 confirmed cleaner availability than the
+# OpenRouter primaries which hit parse failures at 46% / 71%).
+# ---------------------------------------------------------------------------
+
+
+class OpencodeZenKimiK26Adapter(OpencodeZenAdapter):
+    """opencode Zen ``kimi-k2.6`` — backup route for Kimi K2.6.
+
+    Backup route for Kimi K2.6 when OpenRouter primary returns parse
+    failures. Live probe 2026-05-15: 1.3s; opencode Zen resolves this
+    to ``accounts/fireworks/models/kimi-k2p6`` (Fireworks-hosted Kimi).
+    Promoted to PRIMARY for the Kimi seat in Day-5 ensemble because OR
+    had 46% availability due to parse failures.
+    """
+
+    name: str = "opencode_zen:kimi-k2.6"
+    model: str = "kimi-k2.6"
+    model_id: str = "kimi-k2.6"
+
+
+class OpencodeZenGLM51Adapter(OpencodeZenAdapter):
+    """opencode Zen ``glm-5.1`` — backup route for GLM 5.1.
+
+    Backup route for GLM 5.1. Live probe 2026-05-15: 1.7s; opencode
+    Zen resolves to ``frank/GLM-5.1`` (frank gateway). Requires
+    ``max_tokens >= 320`` to avoid empty content under the gateway's
+    response shape. Promoted to PRIMARY for the GLM seat in Day-5
+    ensemble because OR had 71% availability due to parse failures.
+
+    Token-budget quirk
+    ------------------
+
+    Same shape of quirk as :class:`OpencodeZenBigPickleAdapter` (where
+    a small budget leaves ``content`` empty), but the floor on this
+    route is 320 tokens — below it the frank/GLM-5.1 response body
+    consistently returns an empty content slot. Default is set to 512
+    via the ``__init__`` override to keep generous headroom above the
+    320 floor while staying well within typical judge JSON sizes.
+    Callers that pass ``max_tokens`` explicitly to ``__init__`` retain
+    full control; the floor is only the default.
+    """
+
+    name: str = "opencode_zen:glm-5.1"
+    model: str = "glm-5.1"
+    model_id: str = "glm-5.1"
+
+    def __init__(
+        self,
+        api_key_env: str = "OPENCODE_ZEN_API_KEY",
+        max_tokens: int = 512,
+        timeout_s: Optional[float] = None,
+    ) -> None:
+        super().__init__(
+            api_key_env=api_key_env,
+            max_tokens=max_tokens,
+            timeout_s=timeout_s,
+        )
+
+
+class OpencodeZenQwen36PlusAdapter(OpencodeZenAdapter):
+    """opencode Zen ``qwen3.6-plus`` — backup route for Qwen3.6 Plus.
+
+    Backup route for Qwen3.6 Plus when OR primary is degraded. Live
+    probe 2026-05-15: 3.4s.
+    """
+
+    name: str = "opencode_zen:qwen3.6-plus"
+    model: str = "qwen3.6-plus"
+    model_id: str = "qwen3.6-plus"
+
+
+class OpencodeZenNemotron3SuperAdapter(OpencodeZenAdapter):
+    """opencode Zen ``nemotron-3-super-free`` — backup route for Nemotron 3 Super 120B.
+
+    Backup route for Nemotron 3 Super 120B when OR primary is
+    degraded. Live probe 2026-05-15: 1.7s; opencode Zen resolves to
+    ``nvidia/nemotron-3-super-120b-a12b-20230311:free``.
+    """
+
+    name: str = "opencode_zen:nemotron-3-super-free"
+    model: str = "nemotron-3-super-free"
+    model_id: str = "nemotron-3-super-free"
+
+
+class OpencodeZenMiniMaxM27Adapter(OpencodeZenAdapter):
+    """opencode Zen ``minimax-m2.7`` — backup route for MiniMax M2.7.
+
+    Backup route for MiniMax M2.7 when direct API primary is
+    rate-limited. Live probe 2026-05-15: 3.2s.
+    """
+
+    name: str = "opencode_zen:minimax-m2.7"
+    model: str = "minimax-m2.7"
+    model_id: str = "minimax-m2.7"
+
+
+class OpencodeZenGPT55ProAdapter(OpencodeZenAdapter):
+    """opencode Zen ``gpt-5.5-pro`` — backup-of-backup for GPT-5.5 seat.
+
+    Backup-of-backup for GPT-5.5 seat (after OR primary). Live probe
+    2026-05-15: 22s; opencode Zen resolves to
+    ``gpt-5.5-pro-2026-04-23``. NOTE: 22s latency makes this the
+    slowest route in the ensemble — only fires when both OCZ gpt-5.5
+    AND OR ``openai/gpt-5.5`` return unavailable.
+
+    Timeout override
+    ----------------
+
+    Base class default :attr:`VendorAdapter.timeout_s` is 25.0s, which
+    is borderline given the observed 22s live response. This class
+    raises the floor to 30.0s so a typical-case response (with normal
+    network jitter) does not trip the urllib timeout. Callers that
+    pass ``timeout_s`` explicitly to ``__init__`` retain full control.
+    """
+
+    name: str = "opencode_zen:gpt-5.5-pro"
+    model: str = "gpt-5.5-pro"
+    model_id: str = "gpt-5.5-pro"
+    timeout_s: float = 30.0
+
+
 __all__ = [
     "OpencodeZenAdapter",
     "OpencodeZenBigPickleAdapter",
     "OpencodeZenRing261TAdapter",
     "OpencodeZenTrinityLargeAdapter",
     "OpencodeZenDeepSeekV4FlashAdapter",
+    "OpencodeZenKimiK26Adapter",
+    "OpencodeZenGLM51Adapter",
+    "OpencodeZenQwen36PlusAdapter",
+    "OpencodeZenNemotron3SuperAdapter",
+    "OpencodeZenMiniMaxM27Adapter",
+    "OpencodeZenGPT55ProAdapter",
 ]

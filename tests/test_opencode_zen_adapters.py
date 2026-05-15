@@ -38,6 +38,12 @@ import pytest
 from apohara_aegis.opencode_zen_adapters import (
     OpencodeZenBigPickleAdapter,
     OpencodeZenDeepSeekV4FlashAdapter,
+    OpencodeZenGLM51Adapter,
+    OpencodeZenGPT55ProAdapter,
+    OpencodeZenKimiK26Adapter,
+    OpencodeZenMiniMaxM27Adapter,
+    OpencodeZenNemotron3SuperAdapter,
+    OpencodeZenQwen36PlusAdapter,
     OpencodeZenRing261TAdapter,
     OpencodeZenTrinityLargeAdapter,
 )
@@ -354,3 +360,183 @@ def test_big_pickle_live_benign() -> None:
     # prompt. On the unavailable path the fail-open verdict is also
     # is_harmful=False, so the assertion holds in both branches.
     assert verdict.is_harmful is False
+
+
+# ---------------------------------------------------------------------------
+# 10. Kimi K2.6 backup — mocked happy path (Day-5 PRIMARY for Kimi seat)
+# ---------------------------------------------------------------------------
+
+
+def test_opencode_zen_kimi_k26_adapter_evaluate_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Kimi K2.6 via OCZ (live probe 2026-05-15: 1.3s, Fireworks-hosted)."""
+    monkeypatch.setenv("OPENCODE_ZEN_API_KEY", "fake-key")
+    adapter = OpencodeZenKimiK26Adapter()
+    assert adapter._available() is True
+    assert adapter.model_id == "kimi-k2.6"
+    assert adapter.vendor == "opencode_zen"
+
+    response = _fake_chat_completion(_CLEAN_VERDICT)
+    with patch(
+        "apohara_aegis.opencode_zen_adapters._sync_post_json",
+        return_value=(response, response["usage"]),
+    ):
+        verdict = _run(adapter.evaluate("How to bake a cake"))
+
+    assert verdict.is_harmful is False
+    assert verdict.path == "primary"
+    assert verdict.confidence == pytest.approx(0.95, abs=1e-6)
+    assert verdict.vendor == "opencode_zen"
+    assert verdict.model == "kimi-k2.6"
+
+
+# ---------------------------------------------------------------------------
+# 11. GLM 5.1 backup — mocked happy path + max_tokens >= 320 guarantee
+# ---------------------------------------------------------------------------
+
+
+def test_opencode_zen_glm51_adapter_evaluate_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GLM 5.1 via OCZ — frank/GLM-5.1 needs max_tokens >= 320 to avoid
+    empty content under the gateway's response shape. Body-shape check
+    asserts the floor so a future regression is caught."""
+    monkeypatch.setenv("OPENCODE_ZEN_API_KEY", "fake-key")
+    adapter = OpencodeZenGLM51Adapter()
+    assert adapter._available() is True
+    assert adapter.model_id == "glm-5.1"
+    assert adapter.vendor == "opencode_zen"
+
+    # Body-shape contract: max_tokens MUST be >= 320 for frank/GLM-5.1.
+    body = adapter._build_request_body("test prompt")
+    assert "max_tokens" in body
+    assert body["max_tokens"] >= 320, (
+        "GLM 5.1 via frank gateway requires max_tokens >= 320; "
+        "below the floor the response content slot returns empty."
+    )
+
+    response = _fake_chat_completion(_CLEAN_VERDICT)
+    with patch(
+        "apohara_aegis.opencode_zen_adapters._sync_post_json",
+        return_value=(response, response["usage"]),
+    ):
+        verdict = _run(adapter.evaluate("How to bake a cake"))
+
+    assert verdict.is_harmful is False
+    assert verdict.path == "primary"
+    assert verdict.confidence == pytest.approx(0.95, abs=1e-6)
+    assert verdict.vendor == "opencode_zen"
+    assert verdict.model == "glm-5.1"
+
+
+# ---------------------------------------------------------------------------
+# 12. Qwen 3.6 Plus backup — mocked happy path
+# ---------------------------------------------------------------------------
+
+
+def test_opencode_zen_qwen36plus_adapter_evaluate_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Qwen3.6 Plus via OCZ (live probe 2026-05-15: 3.4s)."""
+    monkeypatch.setenv("OPENCODE_ZEN_API_KEY", "fake-key")
+    adapter = OpencodeZenQwen36PlusAdapter()
+    assert adapter.model_id == "qwen3.6-plus"
+
+    response = _fake_chat_completion(_CLEAN_VERDICT)
+    with patch(
+        "apohara_aegis.opencode_zen_adapters._sync_post_json",
+        return_value=(response, response["usage"]),
+    ):
+        verdict = _run(adapter.evaluate("How to bake a cake"))
+
+    assert verdict.is_harmful is False
+    assert verdict.path == "primary"
+    assert verdict.vendor == "opencode_zen"
+    assert verdict.model == "qwen3.6-plus"
+
+
+# ---------------------------------------------------------------------------
+# 13. Nemotron 3 Super backup — mocked happy path
+# ---------------------------------------------------------------------------
+
+
+def test_opencode_zen_nemotron3super_adapter_evaluate_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nemotron 3 Super 120B via OCZ (live probe 2026-05-15: 1.7s)."""
+    monkeypatch.setenv("OPENCODE_ZEN_API_KEY", "fake-key")
+    adapter = OpencodeZenNemotron3SuperAdapter()
+    assert adapter.model_id == "nemotron-3-super-free"
+
+    response = _fake_chat_completion(_CLEAN_VERDICT)
+    with patch(
+        "apohara_aegis.opencode_zen_adapters._sync_post_json",
+        return_value=(response, response["usage"]),
+    ):
+        verdict = _run(adapter.evaluate("How to bake a cake"))
+
+    assert verdict.is_harmful is False
+    assert verdict.path == "primary"
+    assert verdict.vendor == "opencode_zen"
+    assert verdict.model == "nemotron-3-super-free"
+
+
+# ---------------------------------------------------------------------------
+# 14. MiniMax M2.7 backup — mocked happy path
+# ---------------------------------------------------------------------------
+
+
+def test_opencode_zen_minimax_m27_adapter_evaluate_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """MiniMax M2.7 via OCZ backup route (live probe 2026-05-15: 3.2s)."""
+    monkeypatch.setenv("OPENCODE_ZEN_API_KEY", "fake-key")
+    adapter = OpencodeZenMiniMaxM27Adapter()
+    assert adapter.model_id == "minimax-m2.7"
+
+    response = _fake_chat_completion(_CLEAN_VERDICT)
+    with patch(
+        "apohara_aegis.opencode_zen_adapters._sync_post_json",
+        return_value=(response, response["usage"]),
+    ):
+        verdict = _run(adapter.evaluate("How to bake a cake"))
+
+    assert verdict.is_harmful is False
+    assert verdict.path == "primary"
+    assert verdict.vendor == "opencode_zen"
+    assert verdict.model == "minimax-m2.7"
+
+
+# ---------------------------------------------------------------------------
+# 15. GPT-5.5 Pro backup-of-backup — mocked happy path + timeout >= 30
+# ---------------------------------------------------------------------------
+
+
+def test_opencode_zen_gpt55pro_adapter_evaluate_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GPT-5.5 Pro via OCZ — slowest route in the ensemble (22s live
+    probe). Class-level ``timeout_s`` must be >= 30s so normal network
+    jitter does not trip urllib's read timeout."""
+    monkeypatch.setenv("OPENCODE_ZEN_API_KEY", "fake-key")
+    adapter = OpencodeZenGPT55ProAdapter()
+    assert adapter.model_id == "gpt-5.5-pro"
+
+    # Timeout contract: must accommodate the 22s live response.
+    assert adapter.timeout_s >= 30, (
+        "GPT-5.5 Pro live probe was 22s; the urllib read timeout must "
+        "be >= 30s to avoid spurious failures under normal jitter."
+    )
+
+    response = _fake_chat_completion(_CLEAN_VERDICT)
+    with patch(
+        "apohara_aegis.opencode_zen_adapters._sync_post_json",
+        return_value=(response, response["usage"]),
+    ):
+        verdict = _run(adapter.evaluate("How to bake a cake"))
+
+    assert verdict.is_harmful is False
+    assert verdict.path == "primary"
+    assert verdict.vendor == "opencode_zen"
+    assert verdict.model == "gpt-5.5-pro"
