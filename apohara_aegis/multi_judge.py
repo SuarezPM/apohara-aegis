@@ -262,6 +262,15 @@ class JudgeVerdict:
         "unavailable",
         "out_of_budget",
     ] = "primary"
+    # Free-form annotation slot. Used by :class:`FallbackVendorAdapter`
+    # to record which route fired (``route_used``), the ordered list of
+    # routes tried (``routes_tried``), and the
+    # ``fallback_chain_exhausted`` flag so the audit log can recover
+    # the routing decision from the verdict. Default is ``None`` (no
+    # annotation) — the dataclass shape stays backward-compatible with
+    # every callsite that constructs a verdict positionally or by
+    # keyword without this field.
+    metadata: Optional[dict] = None
 
 
 @dataclass
@@ -1080,6 +1089,188 @@ class MiniMaxM27Adapter(VendorAdapter):
 
 
 # ---------------------------------------------------------------------------
+# FallbackVendorAdapter — primary-plus-backup routing wrapper (Day-5)
+# ---------------------------------------------------------------------------
+
+
+def _log_fallback_skipped(route_name: str, exc: BaseException) -> None:
+    """Log that a route in a fallback chain raised before returning a verdict.
+
+    Centralised so every fallback-skip log line has the same shape; that
+    makes the audit log greppable and avoids drift if the format changes
+    later.
+    """
+    logger.warning(
+        "fallback route %s raised %s: %s",
+        route_name,
+        type(exc).__name__,
+        str(exc)[:160],
+    )
+
+
+class FallbackVendorAdapter(VendorAdapter):
+    """Wraps a primary :class:`VendorAdapter` with ordered fallbacks.
+
+    The wrapper presents itself as a single :class:`VendorAdapter` to the
+    ensemble (one vote per ensemble seat) but transparently routes the
+    ``evaluate`` call through a primary adapter first; if the primary
+    returns ``path == 'unavailable'`` (or raises), it iterates through
+    ``fallbacks`` in order and returns the first verdict whose ``path``
+    is NOT ``'unavailable'``. If every route comes back unavailable (or
+    raises), the LAST verdict in the chain is returned with
+    ``metadata['fallback_chain_exhausted'] = True`` and
+    ``metadata['routes_tried']`` populated so the latest error surfaces
+    in the honesty trail.
+
+    Successful routes annotate the returned verdict with
+    ``metadata['route_used']`` set to either ``'primary'`` or
+    ``'backup_<N>'`` (zero-indexed into ``fallbacks``) so the audit log
+    can prove which route actually fired without losing the verdict
+    fields the ensemble already inspects (``is_harmful``, ``vendor``,
+    ``model``, ``latency_ms``, ``path``).
+
+    Cost-ledger semantics
+    =====================
+
+    The wrapper records ZERO cost itself; each underlying adapter
+    increments its own ``cumulative_cost_usd`` ledger only on the call
+    that actually issued. The returned verdict's ``latency_ms`` reflects
+    ONLY the route that returned a verdict — this matches the
+    user-facing "one vote per ensemble seat" contract.
+
+    Label semantics
+    ===============
+
+    The wrapper carries its own ``name``/``model``/``vendor`` attributes
+    (mirrored to ``vendor_name``/``model_name`` properties for the
+    PRD-US-001 spec wording) so audit/UI labels can stay stable across
+    routing decisions; if ``vendor_label`` / ``model_label`` are
+    omitted, the wrapper inherits the primary's identity. The per-route
+    verdict's own ``vendor`` and ``model`` fields are PRESERVED (we
+    never overwrite them) so dissent summaries still show which real
+    provider answered, while the seat-level label (used by
+    ``EnsembleVerdict.per_vendor`` keys, when callers key by the
+    wrapper's ``name``) stays stable across primary/backup routing.
+    """
+
+    def __init__(
+        self,
+        *,
+        primary: VendorAdapter,
+        fallbacks: list[VendorAdapter],
+        vendor_label: Optional[str] = None,
+        model_label: Optional[str] = None,
+    ) -> None:
+        super().__init__(timeout_s=None)
+        self._primary = primary
+        self._fallbacks = list(fallbacks)
+        self._vendor_label = vendor_label
+        self._model_label = model_label
+        # Mirror the seat-level identity onto the standard VendorAdapter
+        # class attributes so existing ensemble code that reads
+        # ``adapter.name`` / ``adapter.vendor`` / ``adapter.model`` (for
+        # per-vendor dict keys, cost caps, etc.) sees the wrapper's
+        # stable seat identity instead of whichever route fired last.
+        self.vendor = vendor_label or primary.vendor
+        self.model = model_label or primary.model
+        self.name = primary.name
+
+    # ------------------------------------------------------------------
+    # PRD-US-001 spec wording — vendor_name / model_name properties
+    # ------------------------------------------------------------------
+
+    @property
+    def vendor_name(self) -> str:
+        return self._vendor_label or self._primary.vendor
+
+    @property
+    def model_name(self) -> str:
+        return self._model_label or self._primary.model
+
+    # ------------------------------------------------------------------
+    # Public driver — overrides VendorAdapter.evaluate entirely so the
+    # _available / _call_api / _parse_response hooks of the base class
+    # are NOT used on the wrapper itself (each underlying adapter still
+    # owns its own).
+    # ------------------------------------------------------------------
+
+    async def evaluate(self, prompt: str) -> JudgeVerdict:
+        """Try primary, then each fallback in order; return first non-unavailable verdict."""
+        routes: list[tuple[str, VendorAdapter]] = [("primary", self._primary)]
+        for idx, fb in enumerate(self._fallbacks):
+            routes.append((f"backup_{idx}", fb))
+
+        routes_tried: list[str] = []
+        last_verdict: Optional[JudgeVerdict] = None
+
+        for route_name, adapter in routes:
+            route_label = (
+                f"{route_name}:{adapter.vendor}/{adapter.model}"
+            )
+            routes_tried.append(route_label)
+            try:
+                verdict = await adapter.evaluate(prompt)
+            except BaseException as exc:  # noqa: BLE001
+                # The base VendorAdapter.evaluate is supposed to never
+                # raise (it catches and converts to ``path='unavailable'``),
+                # but a non-conforming subclass or a wrapped third-party
+                # adapter could still leak an exception. We treat that as
+                # equivalent to ``path='unavailable'`` so the chain
+                # continues, and synthesize a stand-in verdict so the
+                # honesty trail still records the failure.
+                _log_fallback_skipped(route_label, exc)
+                last_verdict = JudgeVerdict(
+                    is_harmful=False,
+                    confidence=0.0,
+                    category="harmless",
+                    reason="vendor_unavailable",
+                    model=adapter.model,
+                    vendor=adapter.vendor,
+                    latency_ms=0.0,
+                    error=f"{type(exc).__name__}: {str(exc)[:160]}",
+                    path="unavailable",
+                )
+                continue
+
+            last_verdict = verdict
+            if verdict.path != "unavailable":
+                annotated_metadata = dict(verdict.metadata or {})
+                annotated_metadata["route_used"] = route_name
+                # Replace via dataclasses.replace so the returned verdict
+                # is a fresh instance and we do not mutate the underlying
+                # adapter's verdict object.
+                return dataclasses.replace(verdict, metadata=annotated_metadata)
+
+        # Every route returned ``path == 'unavailable'`` (or raised). Per
+        # the PRD: return the LAST verdict so the most recent error
+        # surfaces, annotated with the exhausted flag and the full
+        # routes_tried list.
+        if last_verdict is None:
+            # Only reachable if ``routes`` was empty, which is impossible
+            # because the primary is always present. Guard for safety.
+            return JudgeVerdict(
+                is_harmful=False,
+                confidence=0.0,
+                category="harmless",
+                reason="vendor_unavailable",
+                model=self.model,
+                vendor=self.vendor,
+                latency_ms=0.0,
+                error="fallback_chain_empty",
+                path="unavailable",
+                metadata={
+                    "fallback_chain_exhausted": True,
+                    "routes_tried": routes_tried,
+                },
+            )
+
+        annotated_metadata = dict(last_verdict.metadata or {})
+        annotated_metadata["fallback_chain_exhausted"] = True
+        annotated_metadata["routes_tried"] = routes_tried
+        return dataclasses.replace(last_verdict, metadata=annotated_metadata)
+
+
+# ---------------------------------------------------------------------------
 # Default-adapter factory
 # ---------------------------------------------------------------------------
 
@@ -1689,6 +1880,7 @@ __all__ = [
     "GroqGptOssSafeguardAdapter",
     "GroqLlamaPromptGuardAdapter",
     "MiniMaxM27Adapter",
+    "FallbackVendorAdapter",
     "EnsembleJudge",
     "DEFAULT_VOTE_THRESHOLDS",
     "DEFAULT_COST_CAPS_USD",
