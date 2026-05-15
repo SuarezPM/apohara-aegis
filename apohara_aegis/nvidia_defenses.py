@@ -85,7 +85,6 @@ from apohara_aegis.multi_judge import (
     JudgeVerdict,
     VendorAdapter,
     _CF_BYPASS_UA,
-    _PROMPT_TEMPLATE,
     _SYSTEM_INSTRUCTION,
     _sync_post_json,
 )
