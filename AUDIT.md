@@ -660,4 +660,22 @@ The **dominant laggard is `copyright`: 0/28 blocked**. HarmBench's copyright pro
 
 ---
 
+### Adapter additions (2026-05-15, Day 4 — 5 OpenRouter frontier adapters)
+
+NEW MODULE: `apohara_aegis/openrouter_adapters.py` (~500 LOC). 5 adapters added via the `OpenRouterAdapter` base:
+
+- `OpenRouterDeepSeekV4ProAdapter` (`deepseek/deepseek-v4-pro`)
+- `OpenRouterKimiK26Adapter` (`moonshotai/kimi-k2.6`)
+- `OpenRouterGLM51Adapter` (`z-ai/glm-5.1`)
+- `OpenRouterQwen36PlusAdapter` (`qwen/qwen3.6-plus`)
+- `OpenRouterNemotron3Super120BAdapter` (`nvidia/nemotron-3-super-120b-a12b`)
+
+Auth via OpenRouter API key (env `OPENROUTER_API_KEY`). All 5 require the `HTTP-Referer` header per OpenRouter docs (set to the public repo URL for analytics attribution). Each handles `<think>...</think>` CoT stripping, regex JSON-extraction fallback for prose-wrapped responses, and a `message.reasoning` fallback for routes that split CoT off the `content` field. Honest fail-open semantics on vendor failure (timeout / HTTP error / parse failure) — the verdict returns `path="unavailable"` and the ensemble vote excludes the vendor from its denominator.
+
+Test surface: `tests/test_openrouter_adapters.py` — 7 mocked + 2 live-marked tests. Local run with `OPENROUTER_API_KEY` set: 9/9 PASS (mocked 0.08 s, 2 live calls 11.42 s combined; <$0.001 spent).
+
+The 5 adapters are NOT yet wired into the default ensemble — Agent D will update `make_default_ensemble` in a later commit when wiring the full 13-vendor list.
+
+---
+
 *Last updated: 2026-05-15 (entries #14 + #15 — Phase 4 day 3 — comparative bake-off + HarmBench generalization. Entry #14: 11 defenses head-to-head on JBB-Behaviors held-out 80; Apohara Aegis ensemble & single-Gemini both at 95.0% (tied), NVIDIA Nemotron Safety Reasoning 4B at 93.75% FREE (the bake-off surprise), full per-baseline JSONs committed under `logs/baseline_*_20260515T*Z.json`. Entry #15: HarmBench cross-dataset measurement — 63% block rate on Mazeika et al. 2024, with the gap from JBB's 95% concentrated in the `copyright` category (0/28 blocked, outside our 5 vendors' training targets); 100% on misinformation/illegal/harassment categories. New module `apohara_aegis/nvidia_defenses.py` ships 3 NIM adapters (Llama Guard 4 12B, NeMoguard 8B, Nemotron Safety Reasoning 4B). Day-2 entry #13: 5-vendor heterogeneous ensemble (Gemini-3.1-PRO + Claude Opus 4.7 + GPT-5.5 + gpt-oss-safeguard + llama-prompt-guard), async-parallel `EnsembleJudge` with vote policy mapping to NIST RMF + EU AI Act Article 14; MiniMax M2.7 added Day-3 as the 6th vendor. Earlier entries #10-#12 (2026-05-14 PM): defense chain architecture + JBB 95% measurement + Phase 3 deployment on https://66.135.4.30.nip.io/. Maintained by Pablo M. Suarez. External audit contributions credited per entry.*
