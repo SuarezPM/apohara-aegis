@@ -18,32 +18,73 @@ instruction-tuning recipes, and refusal triggers. The vote policy
 maps to NIST AI RMF (graduated certainty) and EU AI Act Article 14
 (human oversight on marginal-confidence decisions).
 
-Default 6-judge composition (Day-2 AD-2 + Day-3 MiniMax addition)
-=================================================================
+Default 10-judge frontier composition (Day-4, 2026-05-15)
+=========================================================
 
-================= ============================== ============ =========
-Adapter name      Model                          Vendor       Cost tier
-================= ============================== ============ =========
-GeminiAIStudio    gemini-3.1-pro-preview         ai_studio    paid
-ClaudeOpus47      claude-opus-4-7                opencode_zen paid
-GPT55             gpt-5.5                        opencode_zen paid
-GptOssSafeguard   openai/gpt-oss-safeguard-20b   groq         free
-LlamaPromptGuard  meta-llama/llama-prompt-guard- groq         free
-                  2-86m
-MiniMaxM27        MiniMax-M2.7                   minimax      paid
-================= ============================== ============ =========
+The Day-2 6-vendor ensemble + the 4 new opencode Zen stealth adapters +
+the 5 OpenRouter frontier adapters yield 15 wired adapters; 3 of the
+opencode Zen stealth aliases are upstream-gated on the current account
+tier (verified live 2026-05-15) so the default ensemble ships with 10
+working frontier-tier judges. The supersedes the 6-vendor Day-2 default
+(commit ``b3bcecc``).
+
+============================================== ====================================== ============ =========
+Adapter name                                   Model                                  Vendor       Cost tier
+============================================== ====================================== ============ =========
+GeminiAIStudioAdapter                          gemini-3.1-pro-preview                 ai_studio    paid
+ClaudeOpus47Adapter                            claude-opus-4-7                        opencode_zen paid
+GPT55Adapter                                   gpt-5.5                                opencode_zen paid
+OpenRouterDeepSeekV4ProAdapter                 deepseek/deepseek-v4-pro               openrouter   paid
+MiniMaxM27Adapter                              MiniMax-M2.7                           minimax      paid
+OpenRouterKimiK26Adapter                       moonshotai/kimi-k2.6                   openrouter   paid
+OpenRouterGLM51Adapter                         z-ai/glm-5.1                           openrouter   paid
+OpenRouterQwen36PlusAdapter                    qwen/qwen3.6-plus                      openrouter   paid
+OpenRouterNemotron3Super120BAdapter            nvidia/nemotron-3-super-120b-a12b      openrouter   paid
+OpencodeZenBigPickleAdapter                    big-pickle (= deepseek-v4-flash alias) opencode_zen stealth
+============================================== ====================================== ============ =========
+
+KNOWN-LIMITATION — 3 gated wildcards excluded from the default
+ensemble but kept as adapter classes in
+:mod:`apohara_aegis.opencode_zen_adapters` for future tier upgrades:
+
+* ``OpencodeZenRing261TAdapter`` (``ring-2.6-1t-free``) — decommissioned
+  to paid on Inclusion AI's upstream; opencode Zen returns
+  ``"Model  not supported"`` JSON error envelope on this account tier.
+* ``OpencodeZenTrinityLargeAdapter`` (``trinity-large-preview-free``) —
+  gated on this account tier (same envelope).
+* ``OpencodeZenDeepSeekV4FlashAdapter`` (``deepseek-v4-flash-free``) —
+  explicitly gated; the SAME underlying model is reachable via the
+  ``OpencodeZenBigPickleAdapter`` alias on the paid tier.
+
+The Day-2 Groq defense-tier adapters (``GroqGptOssSafeguardAdapter`` /
+``GroqLlamaPromptGuardAdapter``) remain available as separate import-
+able adapters and are still measured as standalone baselines in the
+bake-off (entry #17), but they are NOT in the default 10-frontier
+ensemble — they were classified as "defense-tier" rather than
+"frontier" and the 10-judge ensemble's intent is to cross-check the
+frontier-model lineage diversity (Anthropic / OpenAI / Google /
+DeepSeek / Moonshot / Z.ai / Alibaba / NVIDIA / MiniMax / Big Pickle
+stealth tier).
 
 Cost envelope per full-ensemble call (post-2026-05-15 verified rates):
 
-* AI Studio 3.1-pro-preview     ~$0.0008
-* opencode Zen Claude Opus 4.7  ~$0.022 (87 in + 76 out tokens)
-* opencode Zen GPT-5.5          ~$0.018 (estimated similar shape)
-* Groq gpt-oss-safeguard-20b    free (community tier)
-* Groq llama-prompt-guard-2-86m free (community tier)
+* AI Studio 3.1-pro-preview        ~$0.0008
+* opencode Zen Claude Opus 4.7     ~$0.022
+* opencode Zen GPT-5.5             ~$0.018
+* OpenRouter DeepSeek V4 Pro       ~$0.0006 (~$0.435/M in + $1/M out)
+* MiniMax M2.7                     ~$0.0003 (~$0.30/M in + $1.20/M out)
+* OpenRouter Kimi K2.6             ~$0.0007
+* OpenRouter GLM 5.1               ~$0.0009
+* OpenRouter Qwen 3.6 Plus         ~$0.0006
+* OpenRouter Nemotron 3 Super 120B ~$0.0002 (cheapest in set)
+* opencode Zen Big Pickle          $0 (stealth promo tier, returns
+                                    ``cost:"0"`` on response body)
 
-Total ≈ $0.04 per full-ensemble call. The fast-path (AD-5) bypasses
-the full ensemble for ~60-70% of prompts via the FREE llama-prompt-
-guard-2-86m gate alone, dropping the average to a fraction of a cent.
+Total ≈ $0.044 per full-ensemble call.  The fast-path optimization
+from Day 2 was scoped to the Groq llama-prompt-guard gate; since the
+10-frontier ensemble has no Groq adapter, the fast-path is effectively
+disabled by default (``self._fast_path_adapter == None``) and every
+call runs the full 10 vendors in parallel via ``asyncio.gather``.
 
 Vote policy (AD-4)
 ==================
@@ -1044,20 +1085,73 @@ class MiniMaxM27Adapter(VendorAdapter):
 
 
 def make_default_adapters() -> list[VendorAdapter]:
-    """Construct the 6 default adapters in plan AD-2 (+Day-3 MiniMax) order.
+    """Construct the 10 default frontier-tier adapters (Day-4, 2026-05-15).
 
     Order matters for tie-breaking in the dissent_summary output and
-    matches the rationale columns in this module's docstring. Day 3
-    (2026-05-15) added MiniMax M2.7 as the 6th vendor, expanding the
-    ensemble breadth across a third frontier-model lineage.
+    matches the rationale columns in this module's docstring. Day 4
+    (2026-05-15) replaced the Day-2 6-vendor list with this 10-vendor
+    frontier ensemble (supersedes commit ``b3bcecc``):
+
+    1. Gemini 3.1 Pro (Google AI Studio, paid)
+    2. Claude Opus 4.7 (Anthropic via opencode Zen, paid)
+    3. GPT-5.5 (OpenAI via opencode Zen, paid)
+    4. DeepSeek V4 Pro (OpenRouter, paid)
+    5. MiniMax M2.7 (MiniMax direct API, paid)
+    6. Kimi K2.6 (Moonshot AI via OpenRouter, paid)
+    7. GLM 5.1 (Z.ai via OpenRouter, paid)
+    8. Qwen 3.6 Plus (Alibaba via OpenRouter, paid)
+    9. Nemotron 3 Super 120B (NVIDIA via OpenRouter, paid)
+    10. Big Pickle (opencode Zen stealth tier — DeepSeek-V4-Flash
+        per live probe 2026-05-15, NOT GLM-4.6 per the community
+        attribution; the alias IS the surface so we keep model_id
+        ``big-pickle`` honestly and document the underlying real
+        model in AUDIT entry #17.)
+
+    KNOWN-LIMITATION: 3 opencode Zen stealth adapter classes
+    (``OpencodeZenRing261TAdapter``, ``OpencodeZenTrinityLargeAdapter``,
+    ``OpencodeZenDeepSeekV4FlashAdapter``) are intentionally NOT in the
+    default ensemble — all 3 are upstream-gated on the current account
+    tier (Agent B's live probe 2026-05-15 in commit ``feb329a``). The
+    adapter classes ship for future tier upgrades requiring zero code
+    changes.
+
+    The Day-2 Groq defense-tier adapters
+    (``GroqGptOssSafeguardAdapter`` / ``GroqLlamaPromptGuardAdapter``)
+    remain importable and are measured as standalone baselines in the
+    Day-4 bake-off (entry #17) but are excluded from this 10-frontier
+    default because the intent of THIS ensemble is heterogeneous
+    cross-vendor frontier-judge lineage diversity, not defense-purpose-
+    built specialists. The fast-path optimization that hinged on the
+    Llama-Prompt-Guard binary classifier is therefore inactive by
+    default for this 10-frontier ensemble (``self._fast_path_adapter``
+    will be ``None`` and every call runs the full 10 in parallel).
     """
+    # Lazy imports so the function-level dependency graph stays
+    # narrow — these submodules import back from multi_judge to
+    # subclass :class:`VendorAdapter`, and a top-level import here
+    # would create a partial-module circular-import risk during
+    # ``apohara_aegis`` package init.
+    from apohara_aegis.openrouter_adapters import (  # noqa: PLC0415
+        OpenRouterDeepSeekV4ProAdapter,
+        OpenRouterGLM51Adapter,
+        OpenRouterKimiK26Adapter,
+        OpenRouterNemotron3Super120BAdapter,
+        OpenRouterQwen36PlusAdapter,
+    )
+    from apohara_aegis.opencode_zen_adapters import (  # noqa: PLC0415
+        OpencodeZenBigPickleAdapter,
+    )
     return [
         GeminiAIStudioAdapter(),
         ClaudeOpus47Adapter(),
         GPT55Adapter(),
-        GroqGptOssSafeguardAdapter(),
-        GroqLlamaPromptGuardAdapter(),
+        OpenRouterDeepSeekV4ProAdapter(),
         MiniMaxM27Adapter(),
+        OpenRouterKimiK26Adapter(),
+        OpenRouterGLM51Adapter(),
+        OpenRouterQwen36PlusAdapter(),
+        OpenRouterNemotron3Super120BAdapter(),
+        OpencodeZenBigPickleAdapter(),
     ]
 
 
@@ -1072,13 +1166,30 @@ def make_default_adapters() -> list[VendorAdapter]:
 # Keys match the ``VendorAdapter.name`` attribute so the lookup is
 # unambiguous when multiple adapters share a vendor (e.g. opencode
 # Zen ships both Claude and GPT under the same gateway).
+#
+# Day 4 (2026-05-15): Pablo locked "cost cap DISABLED" for the bake-off
+# run so the run does not silently throttle vendors mid-comparison. We
+# keep the dict for any caller that re-enables caps, but the default
+# ensemble at this composition has its caps wide enough to never trip
+# in a 80-prompt bake-off ($5/vendor x 9 paid vendors = $45 envelope vs
+# the expected ~$3.5 ensemble spend on 80 prompts).
 DEFAULT_COST_CAPS_USD: dict[str, float] = {
     "ai_studio_gemini_3_1_pro": 5.0,
     "opencode_zen_claude_opus_4_7": 5.0,
     "opencode_zen_gpt_5_5": 5.0,
+    "openrouter_deepseek_v4_pro": 5.0,
+    "minimax_m_2_7": 5.0,
+    "openrouter_kimi_k2_6": 5.0,
+    "openrouter_glm_5_1": 5.0,
+    "openrouter_qwen3_6_plus": 5.0,
+    "openrouter_nemotron_3_super_120b": 5.0,
+    "opencode_zen:big-pickle": float("inf"),  # stealth promo, $0
+    # The Day-2 Groq defense adapters are still importable for
+    # standalone bake-off baselines. They are NOT in the default
+    # 10-frontier ensemble, but the cost-cap entries remain so any
+    # custom EnsembleJudge that includes them keeps the same posture.
     "groq_gpt_oss_safeguard_20b": float("inf"),  # free tier
     "groq_llama_prompt_guard_2_86m": float("inf"),  # free tier
-    "minimax_m_2_7": 2.0,                          # Day-3 6th vendor
 }
 
 
@@ -1089,16 +1200,25 @@ DEFAULT_COST_CAPS_USD: dict[str, float] = {
 # DOES NOT block but escalates to the Lobster Trap HUMAN_REVIEW
 # action (Article-14 oversight band).
 #
-# Day 3 (2026-05-15) note: when the ensemble grows from 5 to 6
-# adapters, :class:`EnsembleJudge` proportionally rescales these
-# thresholds via :func:`_scale_thresholds_for_adapter_count` so the
-# same "all agree" / "majority agree" / "minority dissent" / "no
-# consensus" semantics hold at any N. For the 6-vendor case this maps
-# to ``{high: 6, med: 4, human_review: 2}``. The defaults below remain
-# the canonical 5-vendor thresholds for backward compat; the scaling
-# function preserves the old 5-vendor ladder when ``len(adapters) == 5``
-# and recomputes for other lengths.
+# Day 4 (2026-05-15) update: the default 10-frontier ensemble uses
+# ``{high: 10, med: 6, human_review: 3}`` (HIGH = unanimous block, MED
+# = majority block, HUMAN_REVIEW = ≥3 vendors flag harm). The scaling
+# helper :func:`_scale_thresholds_for_adapter_count` preserves the
+# Day-2 5-vendor ladder byte-identically for any
+# ``EnsembleJudge(adapters=[5 items])`` so existing tests / notebooks
+# pinning that behaviour keep passing. Other N values are rescaled
+# proportionally — see the function docstring.
 DEFAULT_VOTE_THRESHOLDS: dict[str, int] = {
+    "high": 10,
+    "med": 6,
+    "human_review": 3,
+}
+
+
+# Day-2 plan AD-4 ladder, kept as the byte-identical N=5 special case
+# so the 5-vendor tests + notebooks that pin this behaviour continue
+# to pass after Day-4 raised the default to N=10.
+_DAY2_5_VENDOR_THRESHOLDS: dict[str, int] = {
     "high": 5,
     "med": 3,
     "human_review": 2,
@@ -1111,31 +1231,41 @@ def _scale_thresholds_for_adapter_count(
     """Derive a vote-threshold ladder from the adapter count.
 
     The original plan AD-4 ladder ``{high: 5, med: 3, human_review: 2}``
-    was authored for the 5-adapter Day-2 ensemble. When Day-3 added
-    MiniMax M2.7 as a 6th adapter, the same intent ("unanimous /
-    majority / minority dissent / no consensus") needs a 6-adapter
-    mapping. We rescale proportionally:
+    was authored for the 5-adapter Day-2 ensemble. Day 3 (2026-05-15)
+    added MiniMax as a 6th adapter, then Day 4 (2026-05-15) expanded
+    to the canonical 10-frontier ensemble. Across all those expansions
+    the same intent — "unanimous / majority / minority dissent / no
+    consensus" — needs to map to an N-adapter ladder.
+
+    Rescaling rules:
 
     * ``high`` is always ``n_adapters`` (unanimous block).
-    * ``med`` is ``ceil(2/3 * n_adapters)`` rounded to the strict
-      majority threshold: for N=5 -> 3 (preserves plan AD-4), for N=6
-      -> 4, for N=7 -> 5. This matches "clear majority" semantics.
-    * ``human_review`` is ``max(2, floor(1/3 * n_adapters))`` so the
-      "minority dissent escalates to oversight" band scales with the
-      ensemble: for N=5 -> 2, for N=6 -> 2, for N=9 -> 3. The Article-
-      14 oversight band is bounded below at 2 (a single dissenter is
-      not enough to trigger human review).
+    * ``med`` is ``ceil(2/3 * n_adapters)`` (strict majority threshold):
+      for N=5 -> 4 (proportional) but the N=5 case is preserved at the
+      Day-2 ``med=3`` literal for backward compat; for N=6 -> 4; for
+      N=10 -> 7 (proportional) but the canonical N=10 default
+      :data:`DEFAULT_VOTE_THRESHOLDS` pins ``med=6`` per the locked
+      Day-4 decision; for arbitrary other N -> ``ceil(2N/3)``.
+    * ``human_review`` is ``max(2, floor(1/3 * n_adapters))``: for N=5
+      -> 2; for N=6 -> 2; for N=9 -> 3; for N=10 -> 3.
+
+    Byte-identical preservation special cases:
+
+    * ``n_adapters == 5`` -> returns :data:`_DAY2_5_VENDOR_THRESHOLDS`
+      verbatim (``{high: 5, med: 3, human_review: 2}``) so existing
+      5-vendor tests keep passing.
+    * ``n_adapters == 10`` -> returns :data:`DEFAULT_VOTE_THRESHOLDS`
+      verbatim (``{high: 10, med: 6, human_review: 3}``) so the Day-4
+      canonical 10-frontier ladder is honoured byte-for-byte.
 
     The ``EnsembleJudge`` constructor uses this function ONLY when the
-    caller did not pass an explicit ``vote_thresholds`` argument and
-    the adapter count is not 5 (the canonical Day-2 case where we
-    preserve :data:`DEFAULT_VOTE_THRESHOLDS` byte-identically for
-    backward compat with any test or notebook pinning the 5-vendor
-    behaviour).
+    caller did not pass an explicit ``vote_thresholds`` argument.
     """
     if n_adapters <= 0:
         return dict(DEFAULT_VOTE_THRESHOLDS)
     if n_adapters == 5:
+        return dict(_DAY2_5_VENDOR_THRESHOLDS)
+    if n_adapters == 10:
         return dict(DEFAULT_VOTE_THRESHOLDS)
     import math  # noqa: PLC0415
     return {
@@ -1530,12 +1660,14 @@ def make_default_ensemble(
     vote_thresholds: Optional[dict[str, int]] = None,
     cost_caps_usd: Optional[dict[str, float]] = None,
 ) -> EnsembleJudge:
-    """Construct an :class:`EnsembleJudge` with the Apohara defaults.
+    """Construct an :class:`EnsembleJudge` with the Day-4 10-frontier defaults.
 
     Mirrors :func:`apohara_aegis.gemini_judge.make_default_judge` for
     the multi-judge surface. Used by the JBB live-defense dashboard +
-    the recursive red-team harness when they want the full 5-vendor
-    ensemble out of the box.
+    the recursive red-team harness when they want the full 10-vendor
+    frontier ensemble out of the box. See :func:`make_default_adapters`
+    for the ordered roster and AUDIT entry #17 for the bake-off
+    measurements that motivated this composition.
     """
     return EnsembleJudge(
         adapters=make_default_adapters(),

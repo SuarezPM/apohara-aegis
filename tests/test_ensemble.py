@@ -1,16 +1,20 @@
 """Tests for ``apohara_aegis.multi_judge.EnsembleJudge`` — vote + cost cap.
 
-Covers (5 tests):
+Covers (6 tests):
   1. Vote 5/5 harmful -> blocked, HIGH.
   2. Vote 3/5 harmful -> blocked, MED (dissent recorded).
   3. Vote 2/5 harmful -> NOT blocked, HUMAN_REVIEW band (Article-14 oversight).
   4. Vote 0/5 harmful -> NOT blocked, HIGH consensus benign.
   5. Cost cap: an adapter at or above its cap returns path='out_of_budget',
      EnsembleJudge votes with N-1 sources, dissent_summary surfaces the gap.
+  6. Day-4 default ensemble is the 10-vendor frontier composition with
+     ``{high: 10, med: 6, human_review: 3}`` thresholds (US-001 contract).
 
 These tests build the ensemble from STUB adapters so they run offline +
-deterministically. Mock adapters expose ``cumulative_cost_usd`` so the
-cost-cap test can flip the gate without hitting any real API.
+deterministically (tests 1-5). Mock adapters expose ``cumulative_cost_usd``
+so the cost-cap test can flip the gate without hitting any real API. Test
+6 inspects the real :func:`make_default_ensemble` factory but does NOT
+issue any network call — the test only asserts the construction contract.
 """
 from __future__ import annotations
 
@@ -20,9 +24,11 @@ from typing import Optional
 import pytest
 
 from apohara_aegis.multi_judge import (
+    DEFAULT_VOTE_THRESHOLDS,
     EnsembleJudge,
     JudgeVerdict,
     VendorAdapter,
+    make_default_ensemble,
 )
 
 
@@ -198,3 +204,99 @@ def test_ensemble_cost_cap_excludes_overbudget_vendor() -> None:
     )
     # And surfaced in the dissent summary's unavailable bucket.
     assert "unavailable" in v.dissent_summary
+
+
+# ---------------------------------------------------------------------------
+# 6. Day-4 10-frontier ensemble factory contract (US-001)
+# ---------------------------------------------------------------------------
+
+
+def test_default_ensemble_is_10_vendor_frontier() -> None:
+    """`make_default_ensemble` returns the canonical 10-vendor frontier ensemble.
+
+    Construction-only smoke — no network calls. Asserts:
+
+    * Exactly 10 adapters in the documented order
+      (Gemini -> Claude Opus 4.7 -> GPT-5.5 -> DeepSeek V4 Pro ->
+      MiniMax M2.7 -> Kimi K2.6 -> GLM 5.1 -> Qwen 3.6 Plus ->
+      Nemotron 3 Super 120B -> Big Pickle).
+    * Vote thresholds = the new Day-4 `{high: 10, med: 6,
+      human_review: 3}` ladder.
+    * The Day-2 Groq defense adapters are NOT in the default ensemble.
+    * The 3 gated opencode Zen stealth adapters (Ring 2.6 1T,
+      Trinity Large, DeepSeek V4 Flash explicit alias) are NOT in
+      the default ensemble either (they remain importable in
+      :mod:`apohara_aegis.opencode_zen_adapters` for future tier
+      upgrades but are gated upstream per Agent B's 2026-05-15
+      live probe).
+    """
+    # Lazy imports of the new adapter classes so a missing import would
+    # surface here as a test failure rather than a module-load crash
+    # elsewhere.
+    from apohara_aegis.multi_judge import (  # noqa: PLC0415
+        ClaudeOpus47Adapter,
+        GeminiAIStudioAdapter,
+        GPT55Adapter,
+        GroqGptOssSafeguardAdapter,
+        GroqLlamaPromptGuardAdapter,
+        MiniMaxM27Adapter,
+    )
+    from apohara_aegis.opencode_zen_adapters import (  # noqa: PLC0415
+        OpencodeZenBigPickleAdapter,
+        OpencodeZenDeepSeekV4FlashAdapter,
+        OpencodeZenRing261TAdapter,
+        OpencodeZenTrinityLargeAdapter,
+    )
+    from apohara_aegis.openrouter_adapters import (  # noqa: PLC0415
+        OpenRouterDeepSeekV4ProAdapter,
+        OpenRouterGLM51Adapter,
+        OpenRouterKimiK26Adapter,
+        OpenRouterNemotron3Super120BAdapter,
+        OpenRouterQwen36PlusAdapter,
+    )
+
+    e = make_default_ensemble()
+
+    expected_order = [
+        GeminiAIStudioAdapter,
+        ClaudeOpus47Adapter,
+        GPT55Adapter,
+        OpenRouterDeepSeekV4ProAdapter,
+        MiniMaxM27Adapter,
+        OpenRouterKimiK26Adapter,
+        OpenRouterGLM51Adapter,
+        OpenRouterQwen36PlusAdapter,
+        OpenRouterNemotron3Super120BAdapter,
+        OpencodeZenBigPickleAdapter,
+    ]
+
+    assert len(e.adapters) == 10, (
+        f"expected exactly 10 frontier adapters, got {len(e.adapters)}"
+    )
+    for got, want in zip(e.adapters, expected_order):
+        assert isinstance(got, want), (
+            f"adapter order mismatch: got {type(got).__name__}, "
+            f"expected {want.__name__}"
+        )
+
+    # Vote thresholds — the new Day-4 ladder.
+    assert e.vote_thresholds == {"high": 10, "med": 6, "human_review": 3}
+    assert DEFAULT_VOTE_THRESHOLDS == {
+        "high": 10, "med": 6, "human_review": 3,
+    }
+
+    # Groq defense adapters are NOT in the default ensemble.
+    adapter_types = {type(ad) for ad in e.adapters}
+    assert GroqGptOssSafeguardAdapter not in adapter_types
+    assert GroqLlamaPromptGuardAdapter not in adapter_types
+
+    # The 3 gated opencode Zen stealth aliases are NOT in the default
+    # ensemble (they remain importable but are not wired by default).
+    assert OpencodeZenRing261TAdapter not in adapter_types
+    assert OpencodeZenTrinityLargeAdapter not in adapter_types
+    assert OpencodeZenDeepSeekV4FlashAdapter not in adapter_types
+
+    # The fast-path adapter slot is None because no
+    # GroqLlamaPromptGuardAdapter is in the 10-frontier ensemble — the
+    # full ensemble runs in parallel on every call by default.
+    assert e._fast_path_adapter is None
