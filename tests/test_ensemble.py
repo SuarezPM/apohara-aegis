@@ -212,29 +212,29 @@ def test_ensemble_cost_cap_excludes_overbudget_vendor() -> None:
 
 
 def test_default_ensemble_is_10_vendor_frontier() -> None:
-    """`make_default_ensemble` returns the canonical 10-vendor frontier ensemble.
+    """`make_default_ensemble` returns the canonical 10-seat frontier ensemble.
 
-    Construction-only smoke — no network calls. Asserts:
+    Construction-only smoke — no network calls. Asserts (Day-5, US-003):
 
-    * Exactly 10 adapters in the documented order
-      (Gemini -> Claude Opus 4.7 -> GPT-5.5 -> DeepSeek V4 Pro ->
-      MiniMax M2.7 -> Kimi K2.6 -> GLM 5.1 -> Qwen 3.6 Plus ->
-      Nemotron 3 Super 120B -> Big Pickle).
-    * Vote thresholds = the new Day-4 `{high: 10, med: 6,
-      human_review: 3}` ladder.
-    * The Day-2 Groq defense adapters are NOT in the default ensemble.
-    * The 3 gated opencode Zen stealth adapters (Ring 2.6 1T,
-      Trinity Large, DeepSeek V4 Flash explicit alias) are NOT in
-      the default ensemble either (they remain importable in
-      :mod:`apohara_aegis.opencode_zen_adapters` for future tier
-      upgrades but are gated upstream per Agent B's 2026-05-15
-      live probe).
+    * Exactly 10 adapters, each wrapped in :class:`FallbackVendorAdapter`
+      so the seat survives a primary-route degradation by transparently
+      routing through ordered backups.
+    * Seat-level (vendor_label, model_label) order matches the Day-5
+      seat map documented in README §Day-5 and AUDIT entry #18.
+    * Each seat's PRIMARY route is the adapter class documented in the
+      Day-5 seat map (Kimi K2.6 and GLM 5.1 are intentionally promoted
+      to opencode Zen primaries; their OpenRouter siblings are backups).
+    * Vote thresholds = the Day-4 ``{high: 10, med: 6, human_review: 3}``
+      ladder (fallback wrappers don't change seat count).
+    * No Groq defense adapters appear as seats (they remain importable
+      but are not wired by default).
     """
-    # Lazy imports of the new adapter classes so a missing import would
+    # Lazy imports of the adapter classes so a missing import would
     # surface here as a test failure rather than a module-load crash
     # elsewhere.
     from apohara_aegis.multi_judge import (  # noqa: PLC0415
         ClaudeOpus47Adapter,
+        FallbackVendorAdapter,
         GeminiAIStudioAdapter,
         GPT55Adapter,
         GroqGptOssSafeguardAdapter,
@@ -243,58 +243,80 @@ def test_default_ensemble_is_10_vendor_frontier() -> None:
     )
     from apohara_aegis.opencode_zen_adapters import (  # noqa: PLC0415
         OpencodeZenBigPickleAdapter,
-        OpencodeZenDeepSeekV4FlashAdapter,
-        OpencodeZenRing261TAdapter,
-        OpencodeZenTrinityLargeAdapter,
+        OpencodeZenGLM51Adapter,
+        OpencodeZenKimiK26Adapter,
     )
     from apohara_aegis.openrouter_adapters import (  # noqa: PLC0415
         OpenRouterDeepSeekV4ProAdapter,
-        OpenRouterGLM51Adapter,
-        OpenRouterKimiK26Adapter,
         OpenRouterNemotron3Super120BAdapter,
         OpenRouterQwen36PlusAdapter,
     )
 
     e = make_default_ensemble()
 
-    expected_order = [
+    # 10 seats, all FallbackVendorAdapter wrappers.
+    assert len(e.adapters) == 10, (
+        f"expected exactly 10 frontier seats, got {len(e.adapters)}"
+    )
+    for got in e.adapters:
+        assert isinstance(got, FallbackVendorAdapter), (
+            f"every default seat must be a FallbackVendorAdapter, "
+            f"got {type(got).__name__}"
+        )
+
+    # Seat-level (vendor_label, model_label) order — matches the Day-5
+    # seat map in AUDIT entry #18.
+    expected_seat_labels = [
+        ("gemini-seat", "gemini-3.1-pro-preview"),
+        ("claude-opus-47-seat", "claude-opus-4-7"),
+        ("gpt-55-seat", "gpt-5.5"),
+        ("deepseek-v4-seat", "deepseek-v4-pro"),
+        ("minimax-m27-seat", "MiniMax-M2.7"),
+        ("kimi-k26-seat", "kimi-k2.6"),
+        ("glm-51-seat", "glm-5.1"),
+        ("qwen36-plus-seat", "qwen3.6-plus"),
+        ("nemotron-3-super-seat", "nvidia/nemotron-3-super-120b-a12b"),
+        ("big-pickle-seat", "big-pickle"),
+    ]
+    got_seat_labels = [(a.vendor, a.model) for a in e.adapters]
+    assert got_seat_labels == expected_seat_labels, (
+        f"seat label order mismatch:\n  got:  {got_seat_labels}\n"
+        f"  want: {expected_seat_labels}"
+    )
+
+    # Each seat's PRIMARY route — the adapter class documented in the
+    # Day-5 seat map. The promoted seats (Kimi K2.6, GLM 5.1) have
+    # opencode Zen primaries; the standard seats keep their Day-4 route.
+    expected_primary_types = [
         GeminiAIStudioAdapter,
         ClaudeOpus47Adapter,
         GPT55Adapter,
         OpenRouterDeepSeekV4ProAdapter,
         MiniMaxM27Adapter,
-        OpenRouterKimiK26Adapter,
-        OpenRouterGLM51Adapter,
+        OpencodeZenKimiK26Adapter,    # PROMOTED to primary (Day-5)
+        OpencodeZenGLM51Adapter,      # PROMOTED to primary (Day-5)
         OpenRouterQwen36PlusAdapter,
         OpenRouterNemotron3Super120BAdapter,
         OpencodeZenBigPickleAdapter,
     ]
-
-    assert len(e.adapters) == 10, (
-        f"expected exactly 10 frontier adapters, got {len(e.adapters)}"
-    )
-    for got, want in zip(e.adapters, expected_order):
-        assert isinstance(got, want), (
-            f"adapter order mismatch: got {type(got).__name__}, "
-            f"expected {want.__name__}"
+    for seat, want in zip(e.adapters, expected_primary_types):
+        primary = seat._primary  # noqa: SLF001
+        assert isinstance(primary, want), (
+            f"primary route mismatch for seat {seat.vendor!r}: "
+            f"got {type(primary).__name__}, expected {want.__name__}"
         )
 
-    # Vote thresholds — the new Day-4 ladder.
+    # Vote thresholds — the Day-4 ladder (fallback wrappers don't
+    # change the seat count or the ladder).
     assert e.vote_thresholds == {"high": 10, "med": 6, "human_review": 3}
     assert DEFAULT_VOTE_THRESHOLDS == {
         "high": 10, "med": 6, "human_review": 3,
     }
 
-    # Groq defense adapters are NOT in the default ensemble.
-    adapter_types = {type(ad) for ad in e.adapters}
-    assert GroqGptOssSafeguardAdapter not in adapter_types
-    assert GroqLlamaPromptGuardAdapter not in adapter_types
-
-    # The 3 gated opencode Zen stealth aliases are NOT in the default
-    # ensemble (they remain importable but are not wired by default).
-    assert OpencodeZenRing261TAdapter not in adapter_types
-    assert OpencodeZenTrinityLargeAdapter not in adapter_types
-    assert OpencodeZenDeepSeekV4FlashAdapter not in adapter_types
+    # Groq defense adapters are NOT seats in the default ensemble.
+    seat_primary_types = {type(seat._primary) for seat in e.adapters}  # noqa: SLF001
+    assert GroqGptOssSafeguardAdapter not in seat_primary_types
+    assert GroqLlamaPromptGuardAdapter not in seat_primary_types
 
     # The fast-path adapter slot is None because no
     # GroqLlamaPromptGuardAdapter is in the 10-frontier ensemble — the

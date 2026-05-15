@@ -1323,26 +1323,96 @@ def make_default_adapters() -> list[VendorAdapter]:
     # would create a partial-module circular-import risk during
     # ``apohara_aegis`` package init.
     from apohara_aegis.openrouter_adapters import (  # noqa: PLC0415
+        OpenRouterClaudeOpus47FastAdapter,
         OpenRouterDeepSeekV4ProAdapter,
+        OpenRouterGeminiAdapter,
         OpenRouterGLM51Adapter,
+        OpenRouterGPT55Adapter,
         OpenRouterKimiK26Adapter,
         OpenRouterNemotron3Super120BAdapter,
         OpenRouterQwen36PlusAdapter,
     )
     from apohara_aegis.opencode_zen_adapters import (  # noqa: PLC0415
         OpencodeZenBigPickleAdapter,
+        OpencodeZenDeepSeekV4FlashAdapter,
+        OpencodeZenGLM51Adapter,
+        OpencodeZenGPT55ProAdapter,
+        OpencodeZenKimiK26Adapter,
+        OpencodeZenMiniMaxM27Adapter,
+        OpencodeZenNemotron3SuperAdapter,
+        OpencodeZenQwen36PlusAdapter,
     )
+    # Day-5 (2026-05-15): every seat wrapped in FallbackVendorAdapter so
+    # the ensemble keeps a seat available even when its primary route
+    # degrades. The wrapper's identity (vendor_label / model_label) is
+    # the stable seat-level key the dissent-summary / per_vendor dict
+    # use; the per-route verdict still carries the underlying
+    # provider's real vendor/model fields. See AUDIT entry #18 for the
+    # rationale per seat. Two seats (Kimi K2.6, GLM 5.1) intentionally
+    # PROMOTE opencode Zen to primary because Day-4 measurements showed
+    # parse-failure-prone OpenRouter responses on those exact models.
+    # Big Pickle has NO fallback — no clean cross-provider sibling.
     return [
-        GeminiAIStudioAdapter(),
-        ClaudeOpus47Adapter(),
-        GPT55Adapter(),
-        OpenRouterDeepSeekV4ProAdapter(),
-        MiniMaxM27Adapter(),
-        OpenRouterKimiK26Adapter(),
-        OpenRouterGLM51Adapter(),
-        OpenRouterQwen36PlusAdapter(),
-        OpenRouterNemotron3Super120BAdapter(),
-        OpencodeZenBigPickleAdapter(),
+        FallbackVendorAdapter(
+            primary=GeminiAIStudioAdapter(),
+            fallbacks=[OpenRouterGeminiAdapter()],
+            vendor_label="gemini-seat",
+            model_label="gemini-3.1-pro-preview",
+        ),
+        FallbackVendorAdapter(
+            primary=ClaudeOpus47Adapter(),
+            fallbacks=[OpenRouterClaudeOpus47FastAdapter()],
+            vendor_label="claude-opus-47-seat",
+            model_label="claude-opus-4-7",
+        ),
+        FallbackVendorAdapter(
+            primary=GPT55Adapter(),
+            fallbacks=[OpenRouterGPT55Adapter(), OpencodeZenGPT55ProAdapter()],
+            vendor_label="gpt-55-seat",
+            model_label="gpt-5.5",
+        ),
+        FallbackVendorAdapter(
+            primary=OpenRouterDeepSeekV4ProAdapter(),
+            fallbacks=[OpencodeZenDeepSeekV4FlashAdapter()],
+            vendor_label="deepseek-v4-seat",
+            model_label="deepseek-v4-pro",
+        ),
+        FallbackVendorAdapter(
+            primary=MiniMaxM27Adapter(),
+            fallbacks=[OpencodeZenMiniMaxM27Adapter()],
+            vendor_label="minimax-m27-seat",
+            model_label="MiniMax-M2.7",
+        ),
+        FallbackVendorAdapter(
+            primary=OpencodeZenKimiK26Adapter(),
+            fallbacks=[OpenRouterKimiK26Adapter()],
+            vendor_label="kimi-k26-seat",
+            model_label="kimi-k2.6",
+        ),
+        FallbackVendorAdapter(
+            primary=OpencodeZenGLM51Adapter(),
+            fallbacks=[OpenRouterGLM51Adapter()],
+            vendor_label="glm-51-seat",
+            model_label="glm-5.1",
+        ),
+        FallbackVendorAdapter(
+            primary=OpenRouterQwen36PlusAdapter(),
+            fallbacks=[OpencodeZenQwen36PlusAdapter()],
+            vendor_label="qwen36-plus-seat",
+            model_label="qwen3.6-plus",
+        ),
+        FallbackVendorAdapter(
+            primary=OpenRouterNemotron3Super120BAdapter(),
+            fallbacks=[OpencodeZenNemotron3SuperAdapter()],
+            vendor_label="nemotron-3-super-seat",
+            model_label="nvidia/nemotron-3-super-120b-a12b",
+        ),
+        FallbackVendorAdapter(
+            primary=OpencodeZenBigPickleAdapter(),
+            fallbacks=[],
+            vendor_label="big-pickle-seat",
+            model_label="big-pickle",
+        ),
     ]
 
 
