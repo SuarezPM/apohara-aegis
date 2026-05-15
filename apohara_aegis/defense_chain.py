@@ -48,9 +48,10 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Literal, Optional
+from typing import Any, Callable, Literal, Optional, Union
 
 from apohara_aegis.gemini_judge import GeminiJudge, JudgeVerdict
+from apohara_aegis.multi_judge import EnsembleVerdict, IJudge
 from apohara_aegis.owasp_regex import match_extended_patterns
 
 logger = logging.getLogger("apohara_aegis.defense_chain")
@@ -76,7 +77,13 @@ class ChainVerdict:
     confidence: float  # judge confidence when defended_by=gemini_judge; 1.0 for regex/LT (deterministic), 0.0 on none
     total_latency_ms: float
     layer_latencies: dict = field(default_factory=dict)
-    judge_verdict: Optional[JudgeVerdict] = None  # only set when judge fired
+    # ``judge_verdict`` is either a :class:`JudgeVerdict` (single-vendor
+    # judge) or a :class:`EnsembleVerdict` (multi-vendor ensemble). Both
+    # shapes are JSON-serialisable via ``dataclasses.asdict`` and the
+    # JBB harness logs persist them indistinguishably. Field name kept
+    # as ``judge_verdict`` (rather than ``judge_result``) for backward
+    # compat with the existing audit/log records.
+    judge_verdict: Optional[Union[JudgeVerdict, EnsembleVerdict]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -105,6 +112,20 @@ class DefenseChain:
     ``blocked=False, defended_by="none"`` for every prompt (a useful
     null baseline for diff measurements).
 
+    Judge-layer flexibility (Phase 4):
+    The ``judge`` argument accepts ANY object that satisfies the
+    :class:`apohara_aegis.multi_judge.IJudge` protocol — i.e. has an
+    ``evaluate(prompt)`` method that returns either a
+    :class:`apohara_aegis.gemini_judge.JudgeVerdict` (single-vendor)
+    or a :class:`apohara_aegis.multi_judge.EnsembleVerdict`
+    (multi-vendor ensemble). The chain inspects whichever fields the
+    returned object exposes — single-vendor judges trip the block via
+    ``is_harmful AND confidence >= threshold``; ensemble judges trip
+    it via ``final_blocked`` (which already incorporates the vote
+    policy threshold). Existing callers passing a ``GeminiJudge``
+    continue to work unchanged; new callers can pass an
+    ``EnsembleJudge`` for the heterogeneous N-vendor mode.
+
     Args:
         regex_match_fn: Callable returning ``(blocked, rule_name)`` for
             the Aegis regex layer. Default: ``match_extended_patterns``.
@@ -112,19 +133,25 @@ class DefenseChain:
             ``blocked`` (bool), ``rule`` (str), and ``latency_ms``
             (float). Pass ``None`` to skip the LT layer (useful when
             the LT proxy is not deployed in a given environment).
-        judge: A ``GeminiJudge`` instance. Pass ``None`` to skip layer 3.
-        judge_threshold: Minimum ``confidence`` from the judge to count
-            as a block; below this the judge's ``is_harmful=True`` is
-            treated as low-confidence noise and the chain returns
+        judge: An ``IJudge``-compatible classifier — ``GeminiJudge``,
+            ``EnsembleJudge``, or any other object with ``.evaluate(prompt)``
+            that returns a ``JudgeVerdict`` or ``EnsembleVerdict``. Pass
+            ``None`` to skip layer 3.
+        judge_threshold: Minimum ``confidence`` from a single-vendor judge
+            to count as a block; below this a ``JudgeVerdict.is_harmful=True``
+            is treated as low-confidence noise and the chain returns
             ``defended_by="none"``. Default 0.7; tunable via the JBB
-            calibration script.
+            calibration script. IGNORED when ``judge`` returns an
+            ``EnsembleVerdict`` — the ensemble's own vote policy in
+            ``EnsembleJudge.vote_thresholds`` already encodes the block
+            decision via ``final_blocked``.
     """
 
     def __init__(
         self,
         regex_match_fn: Optional[RegexMatchFn] = None,
         lt_call_fn: Optional[LtCallFn] = None,
-        judge: Optional[GeminiJudge] = None,
+        judge: Optional[IJudge] = None,
         judge_threshold: float = 0.7,
     ) -> None:
         # Default the regex layer to the production matcher. ``None`` is
@@ -197,22 +224,21 @@ class DefenseChain:
                     judge_verdict=None,
                 )
 
-        # ---------------- Layer 3: GeminiJudge ----------------------------
-        judge_verdict: Optional[JudgeVerdict] = None
+        # ---------------- Layer 3: Judge (single-vendor OR ensemble) -----
+        judge_verdict: Optional[Union[JudgeVerdict, EnsembleVerdict]] = None
         if self.judge is not None:
             t0 = time.perf_counter()
             judge_verdict = self.judge.evaluate(prompt)
             layer_latencies["gemini_judge"] = (time.perf_counter() - t0) * 1000.0
-            blocked_by_judge = (
-                judge_verdict.is_harmful
-                and judge_verdict.confidence >= self.judge_threshold
+            blocked_by_judge, judge_rule, judge_confidence = (
+                self._extract_judge_decision(judge_verdict)
             )
             if blocked_by_judge:
                 return ChainVerdict(
                     blocked=True,
                     defended_by="gemini_judge",
-                    rule=judge_verdict.category,
-                    confidence=judge_verdict.confidence,
+                    rule=judge_rule,
+                    confidence=judge_confidence,
                     total_latency_ms=(time.perf_counter() - t_total_0) * 1000.0,
                     layer_latencies=layer_latencies,
                     judge_verdict=judge_verdict,
@@ -229,6 +255,39 @@ class DefenseChain:
             judge_verdict=judge_verdict,  # may be present even when allowed
         )
 
+    # ------------------------------------------------------------------
+    # IJudge dispatch — adapts single-vendor + ensemble verdict shapes
+    # ------------------------------------------------------------------
+
+    def _extract_judge_decision(
+        self, verdict: Union[JudgeVerdict, EnsembleVerdict],
+    ) -> tuple[bool, str, float]:
+        """Return ``(blocked, rule_name, confidence)`` for either verdict shape.
+
+        Single-vendor :class:`JudgeVerdict`: block iff ``is_harmful`` AND
+        ``confidence >= self.judge_threshold``; rule is ``category``;
+        confidence is the raw float.
+
+        Multi-vendor :class:`EnsembleVerdict`: block iff
+        ``final_blocked`` is True — the ensemble's own vote policy
+        (HIGH / MED / HUMAN_REVIEW / LOW) already incorporates a
+        threshold-equivalent decision, so the chain does NOT re-apply
+        ``judge_threshold`` to it; rule is the ensemble's
+        ``final_confidence`` band; confidence is ``consensus_score``.
+        """
+        if isinstance(verdict, EnsembleVerdict):
+            return (
+                bool(verdict.final_blocked),
+                f"ensemble_{verdict.final_confidence.lower()}",
+                float(verdict.consensus_score),
+            )
+        # Single-vendor path — preserves the V6.0 behaviour bit-identically.
+        blocked = bool(
+            verdict.is_harmful
+            and verdict.confidence >= self.judge_threshold
+        )
+        return blocked, str(verdict.category), float(verdict.confidence)
+
 
 # ---------------------------------------------------------------------------
 # Module-level convenience
@@ -236,7 +295,7 @@ class DefenseChain:
 
 
 def make_default_chain(
-    judge: Optional[GeminiJudge] = None,
+    judge: Optional[IJudge] = None,
     lt_call_fn: Optional[LtCallFn] = None,
     judge_threshold: float = 0.7,
 ) -> DefenseChain:
@@ -249,10 +308,11 @@ def make_default_chain(
     ``defend_inspect`` callables, the JBB dashboard wires ``call_lt``.
 
     The judge defaults to ``None`` so the chain is usable on a box
-    without a Gemini key; callers that want layer 3 must pass an
-    explicit ``judge=make_default_judge()``. This is intentional: it
-    prevents accidental Gemini billing for callers who just want the
-    regex + LT layers.
+    without any LLM key; callers that want layer 3 must pass an
+    explicit ``judge=make_default_judge()`` (single-vendor GeminiJudge)
+    OR ``judge=make_default_ensemble()`` (5-vendor EnsembleJudge).
+    This is intentional: it prevents accidental LLM billing for
+    callers who just want the regex + LT layers.
     """
     return DefenseChain(
         regex_match_fn=match_extended_patterns,
