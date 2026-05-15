@@ -18,8 +18,8 @@ instruction-tuning recipes, and refusal triggers. The vote policy
 maps to NIST AI RMF (graduated certainty) and EU AI Act Article 14
 (human oversight on marginal-confidence decisions).
 
-Default 5-judge composition (locked in plan AD-2, 2026-05-15)
-=============================================================
+Default 6-judge composition (Day-2 AD-2 + Day-3 MiniMax addition)
+=================================================================
 
 ================= ============================== ============ =========
 Adapter name      Model                          Vendor       Cost tier
@@ -30,6 +30,7 @@ GPT55             gpt-5.5                        opencode_zen paid
 GptOssSafeguard   openai/gpt-oss-safeguard-20b   groq         free
 LlamaPromptGuard  meta-llama/llama-prompt-guard- groq         free
                   2-86m
+MiniMaxM27        MiniMax-M2.7                   minimax      paid
 ================= ============================== ============ =========
 
 Cost envelope per full-ensemble call (post-2026-05-15 verified rates):
@@ -116,6 +117,7 @@ import dataclasses
 import json
 import logging
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -914,15 +916,140 @@ class GroqLlamaPromptGuardAdapter(VendorAdapter):
 
 
 # ---------------------------------------------------------------------------
+# Concrete adapter — MiniMax M2.7 (chain-of-thought-aware parsing)
+# ---------------------------------------------------------------------------
+
+
+# CoT-stripping regex shared by the MiniMax adapter. The M2 family
+# prefixes its actual answer with a ``<think>...</think>`` block (the
+# model's reasoning trace). We strip the block whole; if there is no
+# JSON object inside (the rare case where the model reasoned and then
+# refused), :meth:`_coerce_json_dict` returns ``None`` and the adapter
+# falls back to ``path='unavailable'``. The non-greedy DOTALL match
+# handles multi-line CoT including embedded newlines.
+_MINIMAX_COT_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+# Secondary regex to extract a stray JSON judge object from inside a
+# CoT block — used as a fallback when the post-CoT text is empty or
+# the model emitted its JSON inside the think block. We look for the
+# smallest substring starting with ``{"is_harmful"`` and ending at the
+# nearest matching brace.
+_MINIMAX_JUDGE_JSON_RE = re.compile(
+    r'\{\s*"is_harmful"\s*:\s*(?:true|false).*?\}', re.DOTALL
+)
+
+
+class MiniMaxM27Adapter(VendorAdapter):
+    """MiniMax M2.7 via the MiniMax inference API.
+
+    Notes (verified 2026-05-15 live):
+
+    * Endpoint ``https://api.minimax.io/v1/chat/completions``,
+      OpenAI-compatible body shape with ``max_tokens`` (NOT
+      ``max_completion_tokens``).
+    * The M2 family is a reasoning model that emits a
+      ``<think>...</think>`` chain-of-thought block before its final
+      answer. The CoT IS in ``choices[0].message.content`` (not in a
+      separate ``reasoning`` field). The parser strips the CoT block
+      via the ``_MINIMAX_COT_RE`` regex before JSON parsing; if the
+      JSON judge object is embedded inside the CoT block (rare), the
+      secondary ``_MINIMAX_JUDGE_JSON_RE`` regex extracts it.
+    * Behind Cloudflare in the EU region; Cloudflare-UA required.
+    * Usage shape: ``{prompt_tokens, completion_tokens, total_tokens,
+      completion_tokens_details: {reasoning_tokens}}``. The reasoning
+      tokens count toward billing; the ledger uses ``completion_tokens``
+      from the top-level usage, which already includes them.
+    * Pablo's MiniMax plan has full access to the M2.7 model; the
+      default cap is conservative at $2 (well below his subscription
+      ceiling) so a runaway agent loop cannot burn through credit.
+    """
+
+    name: str = "minimax_m_2_7"
+    model: str = "MiniMax-M2.7"
+    vendor: str = "minimax"
+    endpoint: str = "https://api.minimax.io/v1/chat/completions"
+    # MiniMax M2.7 published rates (2026-05): $0.30/M input, $1.20/M
+    # output. The reasoning_tokens are folded into completion_tokens
+    # on the response so we account for them at the output rate, which
+    # matches MiniMax's own billing.
+    cost_per_input_tok: float = 0.30 / 1_000_000
+    cost_per_output_tok: float = 1.20 / 1_000_000
+
+    def __init__(
+        self,
+        api_key_env: str = "MINIMAX_API_KEY",
+        max_tokens: int = 600,
+        timeout_s: Optional[float] = None,
+    ) -> None:
+        super().__init__(timeout_s=timeout_s)
+        self.api_key_env = api_key_env
+        self.max_tokens = int(max_tokens)
+
+    def _available(self) -> bool:
+        return bool(os.environ.get(self.api_key_env))
+
+    def _build_request_body(self, prompt: str) -> dict:
+        return {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": _SYSTEM_INSTRUCTION},
+                {"role": "user", "content": _PROMPT_TEMPLATE.format(prompt=prompt)},
+            ],
+            "max_tokens": self.max_tokens,
+        }
+
+    async def _call_api(self, prompt: str) -> tuple[object, dict]:
+        api_key = os.environ[self.api_key_env]
+        body = self._build_request_body(prompt)
+        loop = asyncio.get_event_loop()
+        parsed, usage = await loop.run_in_executor(
+            None,
+            lambda: _sync_post_json(
+                self.endpoint, body, api_key=api_key, timeout_s=self.timeout_s
+            ),
+        )
+        return parsed, usage
+
+    def _parse_response(
+        self, response_obj: object, latency_ms: float
+    ) -> Optional[JudgeVerdict]:
+        if not isinstance(response_obj, dict):
+            return None
+        try:
+            content = response_obj["choices"][0]["message"].get("content", "")
+        except (KeyError, IndexError, TypeError):
+            return None
+        if not isinstance(content, str):
+            return None
+        # Strip the CoT block; the M2 family always emits one.
+        stripped = _MINIMAX_COT_RE.sub("", content).strip()
+        if stripped:
+            # Normal case: JSON judge object is the post-CoT text.
+            v = self._coerce_json_dict(stripped, latency_ms=latency_ms)
+            if v is not None:
+                return v
+        # Fallback: the model emitted its judge JSON inside the CoT
+        # block (or never closed </think>). Pull out the first JSON
+        # object that looks like a judge verdict.
+        match = _MINIMAX_JUDGE_JSON_RE.search(content)
+        if match is not None:
+            return self._coerce_json_dict(
+                match.group(0), latency_ms=latency_ms
+            )
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Default-adapter factory
 # ---------------------------------------------------------------------------
 
 
 def make_default_adapters() -> list[VendorAdapter]:
-    """Construct the 5 default adapters in plan AD-2 order.
+    """Construct the 6 default adapters in plan AD-2 (+Day-3 MiniMax) order.
 
     Order matters for tie-breaking in the dissent_summary output and
-    matches the rationale columns in this module's docstring.
+    matches the rationale columns in this module's docstring. Day 3
+    (2026-05-15) added MiniMax M2.7 as the 6th vendor, expanding the
+    ensemble breadth across a third frontier-model lineage.
     """
     return [
         GeminiAIStudioAdapter(),
@@ -930,6 +1057,7 @@ def make_default_adapters() -> list[VendorAdapter]:
         GPT55Adapter(),
         GroqGptOssSafeguardAdapter(),
         GroqLlamaPromptGuardAdapter(),
+        MiniMaxM27Adapter(),
     ]
 
 
@@ -950,6 +1078,7 @@ DEFAULT_COST_CAPS_USD: dict[str, float] = {
     "opencode_zen_gpt_5_5": 5.0,
     "groq_gpt_oss_safeguard_20b": float("inf"),  # free tier
     "groq_llama_prompt_guard_2_86m": float("inf"),  # free tier
+    "minimax_m_2_7": 2.0,                          # Day-3 6th vendor
 }
 
 
@@ -959,11 +1088,61 @@ DEFAULT_COST_CAPS_USD: dict[str, float] = {
 # ``human_review`` is special: it is the count at which the ensemble
 # DOES NOT block but escalates to the Lobster Trap HUMAN_REVIEW
 # action (Article-14 oversight band).
+#
+# Day 3 (2026-05-15) note: when the ensemble grows from 5 to 6
+# adapters, :class:`EnsembleJudge` proportionally rescales these
+# thresholds via :func:`_scale_thresholds_for_adapter_count` so the
+# same "all agree" / "majority agree" / "minority dissent" / "no
+# consensus" semantics hold at any N. For the 6-vendor case this maps
+# to ``{high: 6, med: 4, human_review: 2}``. The defaults below remain
+# the canonical 5-vendor thresholds for backward compat; the scaling
+# function preserves the old 5-vendor ladder when ``len(adapters) == 5``
+# and recomputes for other lengths.
 DEFAULT_VOTE_THRESHOLDS: dict[str, int] = {
     "high": 5,
     "med": 3,
     "human_review": 2,
 }
+
+
+def _scale_thresholds_for_adapter_count(
+    n_adapters: int,
+) -> dict[str, int]:
+    """Derive a vote-threshold ladder from the adapter count.
+
+    The original plan AD-4 ladder ``{high: 5, med: 3, human_review: 2}``
+    was authored for the 5-adapter Day-2 ensemble. When Day-3 added
+    MiniMax M2.7 as a 6th adapter, the same intent ("unanimous /
+    majority / minority dissent / no consensus") needs a 6-adapter
+    mapping. We rescale proportionally:
+
+    * ``high`` is always ``n_adapters`` (unanimous block).
+    * ``med`` is ``ceil(2/3 * n_adapters)`` rounded to the strict
+      majority threshold: for N=5 -> 3 (preserves plan AD-4), for N=6
+      -> 4, for N=7 -> 5. This matches "clear majority" semantics.
+    * ``human_review`` is ``max(2, floor(1/3 * n_adapters))`` so the
+      "minority dissent escalates to oversight" band scales with the
+      ensemble: for N=5 -> 2, for N=6 -> 2, for N=9 -> 3. The Article-
+      14 oversight band is bounded below at 2 (a single dissenter is
+      not enough to trigger human review).
+
+    The ``EnsembleJudge`` constructor uses this function ONLY when the
+    caller did not pass an explicit ``vote_thresholds`` argument and
+    the adapter count is not 5 (the canonical Day-2 case where we
+    preserve :data:`DEFAULT_VOTE_THRESHOLDS` byte-identically for
+    backward compat with any test or notebook pinning the 5-vendor
+    behaviour).
+    """
+    if n_adapters <= 0:
+        return dict(DEFAULT_VOTE_THRESHOLDS)
+    if n_adapters == 5:
+        return dict(DEFAULT_VOTE_THRESHOLDS)
+    import math  # noqa: PLC0415
+    return {
+        "high": n_adapters,
+        "med": max(2, math.ceil(2.0 * n_adapters / 3.0)),
+        "human_review": max(2, math.floor(n_adapters / 3.0)),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1018,9 +1197,15 @@ class EnsembleJudge:
         self.adapters: list[VendorAdapter] = (
             adapters if adapters is not None else make_default_adapters()
         )
+        # If the caller explicitly passes vote_thresholds, honour them
+        # byte-identically. Otherwise derive from the adapter count so
+        # the same "unanimous / majority / minority dissent / no
+        # consensus" semantics hold whether the ensemble is 5 (Day-2)
+        # or 6 (Day-3 + MiniMax) or any future N. The N=5 case
+        # preserves plan AD-4 exactly via :func:`_scale_thresholds_for_adapter_count`.
         self.vote_thresholds: dict[str, int] = (
             dict(vote_thresholds) if vote_thresholds is not None
-            else dict(DEFAULT_VOTE_THRESHOLDS)
+            else _scale_thresholds_for_adapter_count(len(self.adapters))
         )
         self.fast_path: bool = bool(fast_path)
         self.cost_caps_usd: dict[str, float] = (
@@ -1265,6 +1450,10 @@ class EnsembleJudge:
             "opencode_zen_gpt_5_5": 0.018,
             "groq_gpt_oss_safeguard_20b": 0.0,
             "groq_llama_prompt_guard_2_86m": 0.0,
+            # MiniMax M2.7 verified 2026-05-15: ~56 in + ~220 out
+            # tokens per call -> ~$0.00028 at $0.30/M in + $1.20/M out.
+            # Upper bound at the max_tokens=600 ceiling: $0.00074.
+            "minimax_m_2_7": 0.00074,
         }
         per_vendor = {
             ad.name: {
@@ -1367,9 +1556,11 @@ __all__ = [
     "GPT55Adapter",
     "GroqGptOssSafeguardAdapter",
     "GroqLlamaPromptGuardAdapter",
+    "MiniMaxM27Adapter",
     "EnsembleJudge",
     "DEFAULT_VOTE_THRESHOLDS",
     "DEFAULT_COST_CAPS_USD",
+    "_scale_thresholds_for_adapter_count",
     "make_default_adapters",
     "make_default_ensemble",
 ]
