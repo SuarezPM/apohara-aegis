@@ -56,6 +56,14 @@ from apohara_aegis.defense_chain import (
     make_default_chain,
 )
 from apohara_aegis.gemini_judge import GeminiJudge, make_default_judge
+# Day-4 (2026-05-15) — optional 10-frontier ensemble judge for the live
+# Vultr deploy. The Gradio dashboard switches between GeminiJudge alone
+# (Phase-3 default) and the 10-vendor EnsembleJudge based on the
+# AEGIS_JUDGE_TYPE env var. See `_make_judge_from_env` below for the
+# switch logic.
+from apohara_aegis.multi_judge import (  # noqa: E402  (after the gemini import deliberately)
+    EnsembleJudge, make_default_ensemble,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -240,11 +248,33 @@ def simulate_block(prompt: str, category: str, rng: random.Random) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _make_judge_from_env():
+    """Return the judge instance the live deploy should use.
+
+    Reads ``AEGIS_JUDGE_TYPE`` from the environment:
+
+    * ``"ensemble"`` -> :func:`apohara_aegis.multi_judge.make_default_ensemble`
+      (the Day-4 10-frontier ensemble, used by the live Vultr deploy).
+    * Anything else (including unset) -> :func:`apohara_aegis.gemini_judge.make_default_judge`
+      (the Phase-3 single-vendor default, used for local Gradio runs).
+
+    Both judge shapes implement the :class:`apohara_aegis.multi_judge.IJudge`
+    protocol so the :class:`apohara_aegis.defense_chain.DefenseChain`
+    adapter accepts either uniformly — the chain's ``evaluate`` method
+    inspects ``is_harmful`` (single-vendor) or ``final_blocked``
+    (ensemble) and produces the same ``ChainVerdict`` shape downstream.
+    """
+    judge_type = os.environ.get("AEGIS_JUDGE_TYPE", "").strip().lower()
+    if judge_type == "ensemble":
+        return make_default_ensemble()
+    return make_default_judge()
+
+
 def _build_chain(
     is_live: bool,
     rng: Optional[random.Random] = None,
     judge_threshold: float = CALIBRATED_JUDGE_THRESHOLD,
-    judge: Optional[GeminiJudge] = None,
+    judge: Optional[object] = None,
 ) -> DefenseChain:
     """Construct the 3-layer DefenseChain used by all run paths.
 
@@ -299,7 +329,7 @@ def run_defense(n_prompts: int, simulate: bool):
         )
         return
 
-    judge = make_default_judge()
+    judge = _make_judge_from_env()
     chain = _build_chain(is_live=is_live, rng=rng, judge=judge)
 
     blocks_by_cat: dict[str, int] = {}
@@ -575,7 +605,7 @@ def run_headless(
     else:
         prompts = raw_prompts[:n_prompts]
 
-    judge = make_default_judge()
+    judge = _make_judge_from_env()
     chain = _build_chain(
         is_live=is_live, rng=rng, judge=judge,
         judge_threshold=judge_threshold,

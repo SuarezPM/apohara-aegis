@@ -182,6 +182,13 @@ services:
       # is also 0.5; we set it explicitly so operators see the value in
       # `docker inspect aegis-ui` without having to read the source.
       CALIBRATED_JUDGE_THRESHOLD: "0.5"
+      # Day-4 (2026-05-15): switch the Gradio dashboard's judge from the
+      # Phase-3 single-vendor GeminiJudge to the 10-frontier EnsembleJudge.
+      # `_make_judge_from_env()` in scripts/jbb_live_defense.py reads
+      # this variable and constructs the corresponding judge. The chain
+      # adapter (apohara_aegis.defense_chain) accepts either uniformly
+      # via the IJudge protocol — same ChainVerdict shape downstream.
+      AEGIS_JUDGE_TYPE: "ensemble"
     tmpfs:
       # User home + pip --user prefix. Ephemeral; recreated each restart.
       # `exec` is REQUIRED on /tmp/aegis-pip: pip --user installs C
