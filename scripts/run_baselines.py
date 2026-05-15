@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
 import statistics
 import sys
@@ -111,26 +112,47 @@ def load_harmbench_prompts(n: int = 100) -> list[dict]:
     """Load N HarmBench prompts (commit 4 uses this).
 
     Returns rows with the SAME keys as JBB (``Goal``, ``Category``,
-    ``Source``) so downstream record-shape is uniform. HarmBench's
-    ``walledai/HarmBench`` HF dataset has a ``standard`` split with
-    400 prompts; we sample deterministically with seed=0.
+    ``Source``) so downstream record-shape is uniform.
+
+    Source: ``swiss-ai/harmbench`` (configs ``DirectRequest`` and
+    ``HumanJailbreaks``). We use the DirectRequest test split (320
+    prompts) because it carries the canonical Mazeika-et-al. behaviour
+    text without jailbreak-template wrapping — the cleanest "raw
+    harmful request" surface for our defense evaluation. The original
+    ``walledai/HarmBench`` mirror requires HuggingFace authentication
+    (gated dataset) and ``cais/HarmBench`` no longer exists; the
+    ``swiss-ai`` mirror is the most-downloaded ungated copy
+    (≈4k downloads / 19k for walledai) and ships the same behaviour
+    text under different column names.
+
+    Keys after normalization (matches JBB row shape):
+    * ``Goal``     : the harmful behaviour text (HarmBench ``Behavior``)
+    * ``Category`` : the SemanticCategory (e.g. ``misinformation_disinformation``,
+                     ``chemical_biological``, ``cybercrime_intrusion``)
+    * ``Source``   : "HarmBench (Mazeika et al. 2024)"
+
+    We sample deterministically with ``random.Random(SEED)`` for
+    cross-baseline reproducibility.
     """
     from datasets import load_dataset  # noqa: PLC0415
 
-    ds = load_dataset("walledai/HarmBench", "standard", split="train")
+    ds = load_dataset("swiss-ai/harmbench", "DirectRequest", split="test")
     rows = list(ds)
     rng = random.Random(SEED)
     rng.shuffle(rows)
     chosen = rows[:n]
-    # Normalize keys: HarmBench uses ``prompt`` and ``category``.
     out = []
     for r in chosen:
-        goal = r.get("prompt") or r.get("behavior") or r.get("Goal", "")
-        category = r.get("category") or r.get("Category", "harmful")
+        goal = r.get("Behavior") or r.get("prompt") or ""
+        category = (
+            r.get("SemanticCategory")
+            or r.get("FunctionalCategory")
+            or "harmful"
+        )
         out.append({
             "Goal": goal,
             "Category": category,
-            "Source": "HarmBench (Mazeika et al. 2024)",
+            "Source": "HarmBench-DirectRequest (Mazeika et al. 2024)",
         })
     return out
 
@@ -138,6 +160,22 @@ def load_harmbench_prompts(n: int = 100) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Per-baseline runner — uniform return shape
 # ---------------------------------------------------------------------------
+
+
+# Module-level config knob: when ``AEGIS_ENSEMBLE_EXCLUDE_VENDOR`` is
+# set in the environment (comma-separated vendor names, e.g.
+# ``ai_studio``), the aegis-ensemble baseline constructs its
+# EnsembleJudge WITHOUT those vendors. Day-3 operational reality: the
+# AI Studio account hit a quota throttle during the 11-baseline bake-
+# off, pushing the per-prompt latency from ~10s to >60s mid-run. The
+# exclusion knob lets us produce an honest baseline result without
+# blocking on the throttle (the resulting JSON labels the degraded
+# composition openly).
+_EXCLUDED_VENDORS = set(
+    v.strip() for v in os.environ.get(
+        "AEGIS_ENSEMBLE_EXCLUDE_VENDOR", ""
+    ).split(",") if v.strip()
+)
 
 
 def _run_aegis_ensemble(prompt: str) -> dict:
@@ -152,15 +190,30 @@ def _run_aegis_ensemble(prompt: str) -> dict:
       to-apples ONLY for aegis-* baselines; standalone defenses would
       need a wrapper that adds LT for fairness. Easier and more honest
       to compare WITHOUT LT for all 11.
+
+    If ``AEGIS_ENSEMBLE_EXCLUDE_VENDOR`` is set, those vendors are
+    filtered out of the default adapter list before constructing the
+    EnsembleJudge. The vote thresholds rescale automatically via
+    :func:`apohara_aegis.multi_judge._scale_thresholds_for_adapter_count`
+    so a 5-vendor ensemble keeps "unanimous / majority / minority"
+    semantics consistent with the 6-vendor default.
     """
     from apohara_aegis.defense_chain import make_default_chain  # noqa: PLC0415
-    from apohara_aegis.multi_judge import make_default_ensemble  # noqa: PLC0415
+    from apohara_aegis.multi_judge import (  # noqa: PLC0415
+        EnsembleJudge, make_default_adapters,
+    )
 
     if not hasattr(_run_aegis_ensemble, "_chain"):
-        ensemble = make_default_ensemble(fast_path=False)
+        adapters = [
+            ad for ad in make_default_adapters()
+            if ad.vendor not in _EXCLUDED_VENDORS
+        ]
+        ensemble = EnsembleJudge(adapters=adapters, fast_path=False)
         _run_aegis_ensemble._chain = make_default_chain(
             judge=ensemble, lt_call_fn=None, judge_threshold=0.5,
         )
+        _run_aegis_ensemble._ensemble = ensemble
+        _run_aegis_ensemble._excluded = sorted(_EXCLUDED_VENDORS)
     cv = _run_aegis_ensemble._chain.evaluate(prompt)
     return _wrap_chain_verdict(cv)
 
