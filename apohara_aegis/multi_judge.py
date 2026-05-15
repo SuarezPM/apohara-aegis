@@ -914,7 +914,7 @@ class GroqLlamaPromptGuardAdapter(VendorAdapter):
 
 
 # ---------------------------------------------------------------------------
-# Default-ensemble factory — placeholder; EnsembleJudge in commit 2
+# Default-adapter factory
 # ---------------------------------------------------------------------------
 
 
@@ -933,6 +933,429 @@ def make_default_adapters() -> list[VendorAdapter]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Default cost caps per vendor — plan AD-7
+# ---------------------------------------------------------------------------
+
+
+# Per-vendor cost ceiling for one ensemble process lifetime. Adapters
+# whose cumulative_cost_usd reaches this cap return path='out_of_budget'
+# for subsequent calls. Free-tier Groq adapters never trip the cap.
+# Keys match the ``VendorAdapter.name`` attribute so the lookup is
+# unambiguous when multiple adapters share a vendor (e.g. opencode
+# Zen ships both Claude and GPT under the same gateway).
+DEFAULT_COST_CAPS_USD: dict[str, float] = {
+    "ai_studio_gemini_3_1_pro": 5.0,
+    "opencode_zen_claude_opus_4_7": 5.0,
+    "opencode_zen_gpt_5_5": 5.0,
+    "groq_gpt_oss_safeguard_20b": float("inf"),  # free tier
+    "groq_llama_prompt_guard_2_86m": float("inf"),  # free tier
+}
+
+
+# Default vote-threshold ladder (plan AD-4). Keys are the band names
+# the ensemble emits in ``final_confidence``; values are the MINIMUM
+# count of vendors-that-flagged-harmful needed to enter that band.
+# ``human_review`` is special: it is the count at which the ensemble
+# DOES NOT block but escalates to the Lobster Trap HUMAN_REVIEW
+# action (Article-14 oversight band).
+DEFAULT_VOTE_THRESHOLDS: dict[str, int] = {
+    "high": 5,
+    "med": 3,
+    "human_review": 2,
+}
+
+
+# ---------------------------------------------------------------------------
+# EnsembleJudge — orchestrates N adapters with async parallel + voting
+# ---------------------------------------------------------------------------
+
+
+class EnsembleJudge:
+    """N-vendor heterogeneous ensemble. Implements ``IJudge``.
+
+    Design tenets
+    -------------
+
+    * **Parallel by default** — :meth:`_evaluate_full_ensemble` runs all
+      adapters concurrently via ``asyncio.gather``. Total latency is
+      ``max(individual)`` instead of ``sum``. This is load-bearing for
+      live-URL responsiveness (AD-3).
+
+    * **Fast-path optimization** (AD-5) — when ``fast_path=True`` and a
+      :class:`GroqLlamaPromptGuardAdapter` is in the adapter set, that
+      adapter alone gates the prompt. Confident verdicts (raw score
+      < 0.3 OR > 0.7) short-circuit the full ensemble; ambiguous
+      scores (0.3-0.7) escalate. Drops p50 by ~95% on the obvious
+      majority of prompts.
+
+    * **Honest fail-open** — adapters that error/time out are visible in
+      ``per_vendor`` with ``path='unavailable'`` but excluded from the
+      active vote. If fewer than 3 vendors remain active, the
+      ensemble degrades to GeminiJudge-alone (single-vendor fallback,
+      AD-6) and emits ``final_confidence='LOW'`` so downstream logs
+      surface the degraded mode.
+
+    * **Vote policy** (AD-4) — see :data:`DEFAULT_VOTE_THRESHOLDS`. The
+      ``HUMAN_REVIEW`` band is the EU AI Act Article-14 oversight tier:
+      the ensemble does NOT block (operationally safer for a 2/5 split)
+      but emits the flag so Lobster Trap can escalate to a human.
+
+    * **Cost-cap discipline** (AD-7) — each adapter's
+      ``cumulative_cost_usd`` is checked before every call; adapters
+      over budget return ``path='out_of_budget'`` synthetically without
+      making the HTTP request. Per-vendor caps in
+      :data:`DEFAULT_COST_CAPS_USD`.
+    """
+
+    def __init__(
+        self,
+        adapters: Optional[list[VendorAdapter]] = None,
+        vote_thresholds: Optional[dict[str, int]] = None,
+        fast_path: bool = True,
+        cost_caps_usd: Optional[dict[str, float]] = None,
+    ) -> None:
+        self.adapters: list[VendorAdapter] = (
+            adapters if adapters is not None else make_default_adapters()
+        )
+        self.vote_thresholds: dict[str, int] = (
+            dict(vote_thresholds) if vote_thresholds is not None
+            else dict(DEFAULT_VOTE_THRESHOLDS)
+        )
+        self.fast_path: bool = bool(fast_path)
+        self.cost_caps_usd: dict[str, float] = (
+            dict(cost_caps_usd) if cost_caps_usd is not None
+            else dict(DEFAULT_COST_CAPS_USD)
+        )
+        # Locate the LlamaPromptGuard adapter if present — needed for
+        # the fast-path tier. ``None`` if absent (e.g. tests pass a
+        # 3-adapter subset).
+        self._fast_path_adapter: Optional[GroqLlamaPromptGuardAdapter] = None
+        for ad in self.adapters:
+            if isinstance(ad, GroqLlamaPromptGuardAdapter):
+                self._fast_path_adapter = ad
+                break
+
+    # ------------------------------------------------------------------
+    # Public sync API — what DefenseChain calls
+    # ------------------------------------------------------------------
+
+    def evaluate(self, prompt: str) -> EnsembleVerdict:
+        """Synchronous entrypoint. Picks fast-path vs full ensemble."""
+        return _run_coro_sync(self._evaluate_async(prompt))
+
+    # ------------------------------------------------------------------
+    # Async core
+    # ------------------------------------------------------------------
+
+    async def _evaluate_async(self, prompt: str) -> EnsembleVerdict:
+        """Async core: fast-path then full-ensemble, returning EnsembleVerdict."""
+        t0 = time.perf_counter()
+
+        # ---- Fast-path tier (AD-5) ---------------------------------
+        if self.fast_path and self._fast_path_adapter is not None:
+            short = await self._evaluate_fast_path(prompt)
+            if short is not None:
+                # Confident gate decision. Build a single-vendor
+                # EnsembleVerdict for transport/log compatibility.
+                consensus = 1.0 if short.is_harmful else 0.0
+                final_blocked = short.is_harmful
+                final_confidence: Literal[
+                    "HIGH", "MED", "HUMAN_REVIEW", "LOW"
+                ] = "HIGH"
+                dissent = (
+                    f"FAST_PATH: {short.vendor}/{short.model} "
+                    f"alone gated (score={short.confidence:.3f})"
+                )
+                return EnsembleVerdict(
+                    final_blocked=final_blocked,
+                    final_confidence=final_confidence,
+                    consensus_score=consensus,
+                    per_vendor={short.vendor + ":" + short.model: short},
+                    dissent_summary=dissent,
+                    total_latency_ms=(time.perf_counter() - t0) * 1000.0,
+                    cost_estimate_usd=0.0,  # llama-prompt-guard is free
+                    fast_path_used=True,
+                )
+
+        # ---- Full ensemble (parallel) ------------------------------
+        full = await self._evaluate_full_ensemble(prompt)
+        full.total_latency_ms = (time.perf_counter() - t0) * 1000.0
+        return full
+
+    async def _evaluate_fast_path(
+        self, prompt: str
+    ) -> Optional[JudgeVerdict]:
+        """Run the LlamaPromptGuard alone. Return its verdict iff confident.
+
+        Returns ``None`` when the score is in the [0.3, 0.7] grey zone
+        (escalate to full ensemble) OR when the adapter is unavailable
+        (the full ensemble can still tally the other 4 vendors).
+        """
+        ad = self._fast_path_adapter
+        if ad is None:
+            return None
+        v = await self._evaluate_with_cap(ad, prompt)
+        if v.path in ("unavailable", "out_of_budget"):
+            return None
+        # ``v.confidence`` here is "confidence in the chosen label"
+        # (see GroqLlamaPromptGuardAdapter._parse_response). Map back
+        # to the raw probability so we can apply the original
+        # 0.3 / 0.7 ambiguity gate cleanly.
+        raw_prob = v.confidence if v.is_harmful else 1.0 - v.confidence
+        if raw_prob < 0.3 or raw_prob > 0.7:
+            return v
+        return None
+
+    async def _evaluate_full_ensemble(
+        self, prompt: str
+    ) -> EnsembleVerdict:
+        """Run all adapters via ``asyncio.gather`` and vote."""
+        coros = [self._evaluate_with_cap(ad, prompt) for ad in self.adapters]
+        results: list[JudgeVerdict] = await asyncio.gather(*coros)
+
+        # Index by ``vendor:model`` so multiple adapters sharing the
+        # same vendor (opencode Zen with Claude + GPT) appear as
+        # distinct keys in the audit dict.
+        per_vendor: dict[str, JudgeVerdict] = {}
+        for ad, v in zip(self.adapters, results):
+            key = f"{v.vendor}:{ad.model}"
+            per_vendor[key] = v
+
+        active = [v for v in results if v.path not in ("unavailable", "out_of_budget")]
+        active_count = len(active)
+        harmful_count = sum(1 for v in active if v.is_harmful)
+
+        # Vote tally per plan AD-4.
+        final_blocked: bool
+        final_confidence: Literal["HIGH", "MED", "HUMAN_REVIEW", "LOW"]
+
+        if active_count < 3:
+            # AD-6: too few active vendors — degrade to single-vendor
+            # mode. We look for the GeminiAIStudioAdapter verdict
+            # first (the documented fallback judge); otherwise use
+            # whatever active vendors remain.
+            fallback = None
+            for ad, v in zip(self.adapters, results):
+                if isinstance(ad, GeminiAIStudioAdapter) and v.path not in (
+                    "unavailable", "out_of_budget"
+                ):
+                    fallback = v
+                    break
+            if fallback is None:
+                # Pick first active if no Gemini; if none active, fail
+                # open (matches gemini_judge.py posture).
+                fallback = active[0] if active else None
+            if fallback is not None:
+                final_blocked = bool(fallback.is_harmful)
+            else:
+                final_blocked = False
+            final_confidence = "LOW"
+            dissent = (
+                f"DEGRADED: only {active_count}/{len(results)} active "
+                f"(fallback to single vendor)"
+            )
+        else:
+            consensus_high = self.vote_thresholds.get("high", 5)
+            consensus_med = self.vote_thresholds.get("med", 3)
+            consensus_review = self.vote_thresholds.get("human_review", 2)
+            if harmful_count >= consensus_high:
+                final_blocked, final_confidence = True, "HIGH"
+            elif harmful_count >= consensus_med:
+                final_blocked, final_confidence = True, "MED"
+            elif harmful_count >= consensus_review:
+                final_blocked, final_confidence = False, "HUMAN_REVIEW"
+            else:
+                final_blocked, final_confidence = False, "HIGH"
+            dissent = self._build_dissent_summary(per_vendor)
+
+        consensus_score = (harmful_count / active_count) if active_count else 0.0
+        cost_est = sum(ad.cumulative_cost_usd for ad in self.adapters)
+
+        return EnsembleVerdict(
+            final_blocked=final_blocked,
+            final_confidence=final_confidence,
+            consensus_score=consensus_score,
+            per_vendor=per_vendor,
+            dissent_summary=dissent,
+            total_latency_ms=0.0,  # caller fills with wall-clock from t0
+            cost_estimate_usd=cost_est,
+            fast_path_used=False,
+        )
+
+    # ------------------------------------------------------------------
+    # Per-adapter call with cost-cap enforcement
+    # ------------------------------------------------------------------
+
+    async def _evaluate_with_cap(
+        self, adapter: VendorAdapter, prompt: str
+    ) -> JudgeVerdict:
+        """Wrap :meth:`VendorAdapter.evaluate` with the cost-cap gate."""
+        cap = self.cost_caps_usd.get(adapter.name, float("inf"))
+        if adapter.cumulative_cost_usd >= cap:
+            return JudgeVerdict(
+                is_harmful=False,
+                confidence=0.0,
+                category="harmless",
+                reason="cost_cap_exceeded",
+                model=adapter.model,
+                vendor=adapter.vendor,
+                latency_ms=0.0,
+                error=f"cost_cap_usd={cap} reached "
+                       f"(spent={adapter.cumulative_cost_usd:.4f})",
+                path="out_of_budget",
+            )
+        return await adapter.evaluate(prompt)
+
+    # ------------------------------------------------------------------
+    # Dissent summary — honesty surface (R-3)
+    # ------------------------------------------------------------------
+
+    def _build_dissent_summary(
+        self, per_vendor: dict[str, JudgeVerdict]
+    ) -> str:
+        """One-line human-readable summary of who voted what.
+
+        Surfaces vendor disagreement honestly so AUDIT.md entries can
+        cite the specific dissenters rather than burying the split.
+        """
+        agree_harmful: list[str] = []
+        agree_benign: list[str] = []
+        unavailable: list[str] = []
+        for key, v in per_vendor.items():
+            tag = v.vendor + ":" + v.model.split("/")[-1]
+            if v.path in ("unavailable", "out_of_budget"):
+                unavailable.append(tag)
+            elif v.is_harmful:
+                agree_harmful.append(tag)
+            else:
+                agree_benign.append(tag)
+        n_harmful = len(agree_harmful)
+        n_active = n_harmful + len(agree_benign)
+        bits = [f"{n_harmful}/{n_active} harmful"]
+        if agree_harmful:
+            bits.append("(" + ", ".join(agree_harmful) + " harmful")
+            if agree_benign:
+                bits.append("; " + ", ".join(agree_benign) + " benign)")
+            else:
+                bits.append(")")
+        elif agree_benign:
+            bits.append("(" + ", ".join(agree_benign) + " benign)")
+        if unavailable:
+            bits.append(" | unavailable: " + ", ".join(unavailable))
+        return "".join(bits)
+
+    # ------------------------------------------------------------------
+    # Cost reporting
+    # ------------------------------------------------------------------
+
+    def cost_estimate_usd(self, n_prompts: int = 1) -> dict:
+        """Upper-bound cost estimate per call + per-vendor live spend.
+
+        Useful for the JBB harness pre-flight banner — print the
+        expected spend before launching a batch run, and the live
+        cumulative spend during the run.
+        """
+        # Empirical per-call costs from the 2026-05-15 probes; these
+        # are pessimistic upper bounds (every prompt routes through
+        # the most expensive vendor at the largest token shape).
+        per_call_upper = {
+            "ai_studio_gemini_3_1_pro": 0.0008,
+            "opencode_zen_claude_opus_4_7": 0.022,
+            "opencode_zen_gpt_5_5": 0.018,
+            "groq_gpt_oss_safeguard_20b": 0.0,
+            "groq_llama_prompt_guard_2_86m": 0.0,
+        }
+        per_vendor = {
+            ad.name: {
+                "per_call_upper_usd": per_call_upper.get(ad.name, 0.0),
+                "cumulative_spent_usd": round(ad.cumulative_cost_usd, 6),
+                "cap_usd": self.cost_caps_usd.get(ad.name, float("inf")),
+            }
+            for ad in self.adapters
+        }
+        total_upper = sum(per_call_upper.get(ad.name, 0.0) for ad in self.adapters)
+        return {
+            "ensemble_upper_per_call_usd": round(total_upper, 4),
+            "ensemble_upper_total_usd": round(total_upper * n_prompts, 4),
+            "per_vendor": per_vendor,
+            "note": (
+                "Upper bounds at largest-token shape; live cost from "
+                "each adapter's cumulative_cost_usd ledger."
+            ),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Sync wrapper for async coro — handles event-loop coexistence
+# ---------------------------------------------------------------------------
+
+
+def _run_coro_sync(coro):
+    """Run an awaitable in a sync context, transparently.
+
+    Supports two calling contexts:
+
+    * **Pure sync** (CLI scripts, tests, smolagents inner loop) — uses
+      ``asyncio.run`` to create + tear down a new event loop.
+    * **Inside an existing event loop** (Gradio's async event handlers,
+      FastAPI request callbacks) — detected via
+      :func:`asyncio.get_running_loop`; falls back to running the
+      coroutine in a dedicated worker thread with its own event loop
+      so the outer loop is not blocked.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop -> pure sync context.
+        return asyncio.run(coro)
+    # Inside an existing loop. Run the coroutine on a worker thread
+    # with a private event loop so we do not collide with the outer
+    # loop's scheduler. ``asyncio.run`` inside the thread is safe.
+    import threading  # noqa: PLC0415
+
+    result_box: list = [None]
+    exc_box: list = [None]
+
+    def _runner() -> None:
+        try:
+            result_box[0] = asyncio.run(coro)
+        except BaseException as exc:  # noqa: BLE001
+            exc_box[0] = exc
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join()
+    if exc_box[0] is not None:
+        raise exc_box[0]  # noqa: TRY301
+    return result_box[0]
+
+
+# ---------------------------------------------------------------------------
+# Convenience entrypoint
+# ---------------------------------------------------------------------------
+
+
+def make_default_ensemble(
+    fast_path: bool = True,
+    vote_thresholds: Optional[dict[str, int]] = None,
+    cost_caps_usd: Optional[dict[str, float]] = None,
+) -> EnsembleJudge:
+    """Construct an :class:`EnsembleJudge` with the Apohara defaults.
+
+    Mirrors :func:`apohara_aegis.gemini_judge.make_default_judge` for
+    the multi-judge surface. Used by the JBB live-defense dashboard +
+    the recursive red-team harness when they want the full 5-vendor
+    ensemble out of the box.
+    """
+    return EnsembleJudge(
+        adapters=make_default_adapters(),
+        vote_thresholds=vote_thresholds,
+        fast_path=fast_path,
+        cost_caps_usd=cost_caps_usd,
+    )
+
+
 __all__ = [
     "JBB_CATEGORIES",
     "IJudge",
@@ -944,5 +1367,9 @@ __all__ = [
     "GPT55Adapter",
     "GroqGptOssSafeguardAdapter",
     "GroqLlamaPromptGuardAdapter",
+    "EnsembleJudge",
+    "DEFAULT_VOTE_THRESHOLDS",
+    "DEFAULT_COST_CAPS_USD",
     "make_default_adapters",
+    "make_default_ensemble",
 ]
