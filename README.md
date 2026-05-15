@@ -73,7 +73,73 @@ The honesty trail (Gemini SDK migration · defense chain · judge calibration ·
 
 ---
 
+## Day 5 — FallbackVendorAdapter: 10-vendor primary+backup routing (2026-05-15)
+
+Day-4 measurements (87.50% block rate) flagged 6 of 10 frontier vendors at <95% availability, with Gemini 3.1 Pro at 0% (AI Studio prepayment depleted) — a Gemini Award eligibility blocker.
+
+The `FallbackVendorAdapter` wrapper (commit `4267cf1`) tries each seat's primary route first, then falls back through ordered alternates before returning unavailable. Each successful verdict carries `metadata.route_used = 'primary' | 'backup_<N>'` so the audit trail shows which provider actually answered for any given seat. The 10-seat wiring landed in commit `575a176`; cost-ledger forwarding + AD-6 seat-label preference patched in commit `bee3e12` per architect review. Re-measured on the same 80 JBB-Behaviors held-out prompts as Day-4 ([`logs/baseline_aegis-ensemble-10frontier_day5_FALLBACK_20260515T212737Z.json`](logs/baseline_aegis-ensemble-10frontier_day5_FALLBACK_20260515T212737Z.json)).
+
+### Ensemble headline (same 80 JBB-Behaviors held-out prompts as Day-4)
+
+| Metric | Day-4 RERUN (no fallback) | Day-5 FALLBACK | Δ |
+|--------|---------------------------|----------------|---|
+| Block rate | 87.50% (70/80) | **93.75% (75/80)** | **+6.25pp** |
+| Errored | 1 | **0** | -1 |
+| p50 latency | ~14000ms | 19740ms | +5740ms (fallback chains add ~one extra hop per degraded route) |
+| p99 latency | ~52000ms | 53438ms | ≈parity |
+| Total runtime | ~30 min | 30.6 min | ≈parity |
+
+### Per-seat routing architecture
+
+| Seat | Primary | Fallback(s) | Live probe 2026-05-15 PM |
+|------|---------|-------------|--------------------------|
+| Gemini 3.1 Pro | AI Studio `gemini-3.1-pro-preview` (depleted) → internal Vertex SA chain | OR `google/gemini-3.1-pro-preview` | OR ✅ 4.3s, $0.0012/call |
+| Claude Opus 4.7 | OCZ `claude-opus-4-7` | OR `anthropic/claude-opus-4.7-fast` | OR ✅ 1.7s |
+| GPT-5.5 | OCZ `gpt-5.5` | OR `openai/gpt-5.5` → OCZ `gpt-5.5-pro` | OR ✅ 4.5s; OCZ-pro ✅ 22s |
+| DeepSeek V4 Pro | OR `deepseek/deepseek-v4-pro` | OCZ `deepseek-v4-flash-free` (degraded family) | OCZ ✅ 1.8s |
+| MiniMax M2.7 | direct `MiniMax-M2.7` | OCZ `minimax-m2.7` | OCZ ✅ 3.2s |
+| Kimi K2.6 | OCZ `kimi-k2.6` ⭐ promoted (Fireworks-hosted) | OR `moonshotai/kimi-k2.6` | OCZ ✅ 1.3s |
+| GLM 5.1 | OCZ `glm-5.1` ⭐ promoted (frank gateway) | OR `z-ai/glm-5.1` | OCZ ✅ 1.7s |
+| Qwen3.6 Plus | OR `qwen/qwen3.6-plus` | OCZ `qwen3.6-plus` | OCZ ✅ 3.4s |
+| Nemotron 3 Super 120B | OR `nvidia/nemotron-3-super-120b-a12b` | OCZ `nemotron-3-super-free` | OCZ ✅ 1.7s |
+| Big Pickle | OCZ `big-pickle` | — (no cross-provider sibling) | — |
+
+### Per-route failure pattern across the 80-prompt run
+
+Extracted from [`logs/day5_bakeoff_run_20260515T212737Z.log`](logs/day5_bakeoff_run_20260515T212737Z.log) — direct adapter-level observations, not inferences:
+
+| Route | "All parse paths failed" (hard) | Transient parse failures (mostly recovered) |
+|-------|---------------------------------|---------------------------------------------|
+| AI Studio Gemini 3.1 Pro Preview | 79/80 (depleted; Vertex SA chain inside `GeminiAIStudioAdapter` handled them — `gemini_judge` BLOCK count = 75, matches ensemble block count) | — |
+| OR `moonshotai/kimi-k2.6` | 13/80 (16.25%) | 14/80 |
+| OCZ `kimi-k2.6` | 0/80 | 7/80 (all recovered via multi-tier parser) |
+| OR `z-ai/glm-5.1` | 7/80 (8.75%) | 7/80 |
+| OCZ `glm-5.1` | 0/80 | 11/80 (all recovered) |
+| OR `deepseek/deepseek-v4-pro` | 6/80 (7.50%) | 6/80 |
+| OR `nvidia/nemotron-3-super-120b-a12b` | 4/80 (5.00%) | 4/80 |
+| OR `openai/gpt-5.5` | 1/80 (1.25%) | 1/80 |
+| `minimax` direct `MiniMax-M2.7` | 0/80 | 2/80 (recovered) |
+| OCZ `big-pickle` | 0/80 | 1/80 (recovered) |
+
+### Honest framing
+
+The +6.25pp ensemble improvement (87.50% → 93.75%) came from three contributions:
+
+1. **Gemini Award eligibility restored.** AI Studio 429-failed 79/80 times (prepayment depleted), but the Vertex SA chain inside `GeminiAIStudioAdapter` handled the calls before the `FallbackVendorAdapter`'s OR Gemini backup ever needed to fire. `gemini_judge` was the deciding voice on all 75 of 75 blocked prompts. The OR Gemini backup is wired as the final safety net for the case when both Google-native paths fail (it cost $0 in this run because Vertex carried the load).
+2. **Kimi / GLM promotions.** OCZ-hosted Kimi K2.6 and GLM 5.1 produced **zero hard failures** across 80 prompts vs the OpenRouter routes' 13/7 hard failures respectively. Soft parse failures persist on the OCZ side (7 Kimi / 11 GLM) but the multi-tier parser recovered every one of them. The promotion was made on the route-quality evidence in the live probes; the bake-off log validated it.
+3. **DeepSeek V4 Pro is still the worst-performing seat by hard-failure count** (6/80 unrecovered). The fallback to OCZ `deepseek-v4-flash-free` is a degraded-family route (smaller sibling, capability gap acknowledged) — listing it as a fallback is honest but does not fully close the seat. NVIDIA NIM `deepseek-ai/deepseek-v4-pro` timed out at probe time and is therefore not in the chain.
+
+### Known limitation
+
+The Day-5 bake-off used `scripts/run_baselines.py`, whose record schema does not persist `EnsembleJudge.per_vendor` aggregates. Per-seat availability % per the Day-4 schema (`per_vendor_agreement`) is therefore not in the Day-5 JSON; the per-route table above is reconstructed from the live log. Adding the richer schema to `run_baselines.py` for the ensemble baseline is tracked as a Day-6 / post-submission item. The ensemble-level block-rate measurement is unaffected.
+
+Day-4 entry #17 measurements remain valid for the 87.50% / 70-block claim under the pre-fallback architecture. This entry is the new canonical measurement going forward.
+
+---
+
 ### Day-4 10-frontier ensemble bake-off (2026-05-15, AUDIT [§17](AUDIT.md))
+
+> **Superseded by Day-5 FallbackVendorAdapter measurements (2026-05-15) — see section above.**
 
 Same 80-prompt JBB-Behaviors held-out test set as the Phase-2 95% baseline (AUDIT [§11](AUDIT.md)) and the Day-3 11-baseline bake-off (AUDIT [§14](AUDIT.md)). Day-4 lifts the ensemble from 6 vendors to **10 frontier vendors** (`apohara_aegis/multi_judge.py::make_default_ensemble`, commit `e9b66f4`) and re-measures 16 standalone defenses + 3 bonus rows on the same prompts. Every digit is the measured value — per-baseline JSONs in [`logs/baseline_*_day4_*.json`](logs/), aggregate in [`logs/bakeoff_day4_20260515T201928Z.json`](logs/bakeoff_day4_20260515T201928Z.json).
 

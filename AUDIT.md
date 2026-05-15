@@ -914,4 +914,70 @@ Day-4 entry #16 (commit `b361aac`) documents the rebuild of `NvidiaNemotronSafet
 
 ---
 
-*Last updated: 2026-05-15 (entry #17 — Phase 4 day 4 — 10-frontier ensemble synthesis + 19-baseline bake-off + Vultr droplet reprovisioned to https://104.156.224.48.nip.io/ + OpenRouter quota event documented transparently. `make_default_ensemble()` returns 10 frontier adapters; the ensemble hit **87.50%** block rate on the 80-prompt JBB-Behaviors held-out set, with NVIDIA Nemotron 3 Super 120B alone hitting **98.72%** as the standout individual frontier judge. Big Pickle = DeepSeek-V4-Flash live finding (Agent B commit `1b809a3`); Nemotron 4B (REBUILT, entry #16) supersedes the Day-3 heuristic measurement. The bake-off used the same 80-prompt JBB-Behaviors held-out and the same 0.5 threshold as Phase 2 / Day 3 — no re-tune. Entry #16 (Phase 4 day 4 earlier): methodology fix rebuilding `NvidiaNemotronSafetyReasoning4BAdapter` from refusal-marker heuristic to a real JSON classifier (76/80 = 95.00%). Day-3 entries #14 + #15: 11-defense bake-off on JBB-Behaviors and HarmBench cross-dataset (63% block rate, copyright category laggard). New module `apohara_aegis/nvidia_defenses.py` ships 3 NIM adapters. Day-2 entry #13: 6-vendor heterogeneous ensemble + `EnsembleJudge` + NIST RMF / EU AI Act Article 14 vote policy. Entries #10-#12 (2026-05-14 PM): defense chain architecture + JBB 95% measurement + Phase 3 deployment. Maintained by Pablo M. Suarez. External audit contributions credited per entry.*
+## 18. 🟢 FallbackVendorAdapter — 10-vendor primary+backup routing (2026-05-15, Day 5)
+
+### What
+
+Introduced `FallbackVendorAdapter` (commit `4267cf1`) wrapping each ensemble seat with a primary adapter and ordered fallbacks. Wired all 10 frontier seats via commit `575a176` with the seat map documented in README §Day-5. Architect REVISE_WITH_FIXES patches applied in commit `bee3e12` (cost-ledger forwarding, AD-6 seat-label preference, Gemini chain docstring). Re-measured on the same 80 JBB-Behaviors held-out prompts: ensemble block rate moved from **87.50%** (Day-4 RERUN, AUDIT [§17](#17--10-frontier-ensemble--19-baseline-bake-off-2026-05-15-phase-4-day-4--heterogeneous-robustness--openrouter-quota-event)) to **93.75%** — +6.25pp, 75 of 80 blocked, **0 errors** (vs 1 in Day-4 RERUN). Runtime: 30.6 min (≈parity with Day-4). p50 latency: 19740ms (+5740ms vs Day-4, the cost of fallback chains adding one extra hop per degraded route).
+
+### Live probe matrix (2026-05-15 PM)
+
+- ✅ OR `google/gemini-3.1-pro-preview`: HTTP 200, 4.3s, $0.0012/call → restores Gemini seat
+- ✅ OR `anthropic/claude-opus-4.7-fast`: HTTP 200, 1.7s
+- ✅ OR `openai/gpt-5.5`: HTTP 200, 4.5s
+- ✅ OCZ `kimi-k2.6`: 1.3s, resolves to Fireworks (`accounts/fireworks/models/kimi-k2p6`)
+- ✅ OCZ `glm-5.1`: 1.7s, resolves to `frank/GLM-5.1` (needs max_tokens ≥ 320)
+- ✅ OCZ `qwen3.6-plus`: 3.4s
+- ✅ OCZ `nemotron-3-super-free`: 1.7s, resolves to `nvidia/nemotron-3-super-120b-a12b-20230311:free`
+- ✅ OCZ `minimax-m2.7`: 3.2s
+- ✅ OCZ `gpt-5.5-pro`: 22s (slow but works), resolves to `gpt-5.5-pro-2026-04-23`
+- ✅ OCZ `deepseek-v4-flash-free`: 1.8s
+- ❌ OCZ `gemini-3.1-pro`: 401 (Pablo's tier lacks GCP auth handoff)
+- ❌ OCZ `ring-2.6-1t-free`: no longer free
+- ❌ OCZ `trinity-large-preview-free`: no endpoints
+- ❌ NVIDIA NIM `deepseek-ai/deepseek-v4-pro`: TimeoutError
+
+### Per-route observations (from the Day-5 bake-off log)
+
+Extracted from [`logs/day5_bakeoff_run_20260515T212737Z.log`](logs/day5_bakeoff_run_20260515T212737Z.log) — direct adapter-level signals, not inferences:
+
+- **AI Studio Gemini 3.1 Pro Preview** 429-failed **79/80** times (prepayment depleted). The internal Vertex SA chain inside `GeminiAIStudioAdapter` (commit `e9b66f4`) handled all 79; `gemini_judge` ended up the deciding voice on **75 of 75** blocked prompts. The `FallbackVendorAdapter`'s OR Gemini backup did not need to fire (it remains wired as the final safety net for when both Google-native paths fail).
+- **OR `moonshotai/kimi-k2.6`**: 13/80 hard failures (16.25%) — these all routed to the OCZ Kimi primary, which had 0 hard failures.
+- **OCZ `kimi-k2.6`**: 0/80 hard failures; 7/80 transient invalid-JSON parses that all recovered via the multi-tier parser.
+- **OR `z-ai/glm-5.1`**: 7/80 hard failures (8.75%) — routed to OCZ GLM primary (0 hard failures).
+- **OCZ `glm-5.1`**: 0/80 hard failures; 11/80 transient invalid-JSON parses that all recovered (the `max_tokens=512` override over the 320 floor was load-bearing).
+- **OR `deepseek/deepseek-v4-pro`**: 6/80 hard failures (7.50%) — the worst-performing seat after the Kimi/GLM promotions.
+- **OR `nvidia/nemotron-3-super-120b-a12b`**: 4/80 hard failures (5.00%).
+- **OR `openai/gpt-5.5`**: 1/80 hard failure (only the OR backup; the OCZ primary did not surface a hard-failure pattern in the log).
+- **`minimax` direct `MiniMax-M2.7`**: 0/80 hard failures; 2/80 transient parses (recovered).
+- **OCZ `big-pickle`**: 0/80 hard failures; 1/80 transient parse (recovered).
+
+### Honest disclosures
+
+1. **Gemini routing in this run was carried by Vertex, not OpenRouter.** The OR Gemini backup is wired and live-probed (4.3s, $0.0012/call, finish_reason=stop) but it cost $0 in the Day-5 bake-off because the Vertex chain inside `GeminiAIStudioAdapter` absorbed all 79 AI Studio 429s before the wrapper's backup needed to fire. The `gemini_judge` defender BLOCK count (75) exactly matches the ensemble block count, confirming the Gemini seat carried the run. Gemini Award eligibility is preserved: Gemini 3.1 Pro Preview is now reachable via two independent Google-affiliated paths (Vertex + OR) plus the OR `google/gemini-3.1-pro-preview` safety net.
+2. **Kimi K2.6 PROMOTION (OR → OCZ primary).** Validated empirically by the bake-off: OR 13/80 hard fails vs OCZ 0/80. OCZ resolves Kimi to a Fireworks endpoint (`accounts/fireworks/models/kimi-k2p6`) with consistent JSON output. The OR route is kept as a backup so the seat still has redundancy.
+3. **GLM 5.1 PROMOTION (OR → OCZ primary).** Validated empirically: OR 7/80 hard fails vs OCZ 0/80. OCZ resolves GLM to `frank/GLM-5.1` (the frank gateway). The new OCZ GLM adapter sets `max_tokens=512` (over the 320 floor) — without that override the gateway returned empty content under tight budgets at probe time.
+4. **Big Pickle has no fallback by design.** If opencode Zen's `big-pickle` route degrades, the seat goes unavailable. The community-reported underlying model (GLM-4.6 per Reddit/HN) was refuted by Agent B's live response-envelope probe on Day-4 (commit `1b809a3`): the actual `model:` field in the response is `deepseek-v4-flash`. We left Big Pickle as a unique seat because the alternates (OCZ `deepseek-v4-flash-free`, which is the same underlying model) would just be a relabel. In Day-5 it produced 0 hard failures.
+5. **DeepSeek V4 Pro is the only seat where the fallback is a degraded-family route.** OCZ `deepseek-v4-flash-free` is a smaller sibling model. Listing it as a fallback is honest: if the primary OR DeepSeek V4 Pro fails (6/80 in Day-5), we get a DeepSeek family member (vs. unavailable), but acknowledge the capability gap. NVIDIA NIM `deepseek-ai/deepseek-v4-pro` timed out at probe time and is therefore not in the chain.
+
+### Known limitation
+
+The Day-5 bake-off used `scripts/run_baselines.py`, whose record schema for the ensemble baseline does NOT persist `EnsembleJudge.per_vendor` aggregates (per-seat availability % à la Day-4's `per_vendor_agreement`). The bake-off JSON [`baseline_aegis-ensemble-10frontier_day5_FALLBACK_20260515T212737Z.json`](logs/baseline_aegis-ensemble-10frontier_day5_FALLBACK_20260515T212737Z.json) carries the ensemble-level block-rate measurement; the per-route table above is reconstructed from the bake-off log. Adding the richer schema to `run_baselines.py` for the ensemble baseline is a Day-6 / post-submission item — it does not change the ensemble-level claim. Cost ledger reads $0 in this JSON because the bake-off process started BEFORE the architect cost-cap-forwarding fix (commit `bee3e12`) landed; the next ensemble run will report honest per-seat spend.
+
+### Canonical artifacts
+
+- Wrapper class commit: `4267cf1`
+- 3 OR backup adapters (Gemini/Claude-fast/GPT-5.5): `8f7e360`
+- 6 OCZ backup adapters (Kimi/GLM/Qwen/Nemotron/MiniMax/GPT-5.5-pro): `f47ee37`
+- 10-seat wiring: `575a176`
+- Architect REVISE_WITH_FIXES patches: `bee3e12`
+- Day-5 measurement JSON: [`logs/baseline_aegis-ensemble-10frontier_day5_FALLBACK_20260515T212737Z.json`](logs/baseline_aegis-ensemble-10frontier_day5_FALLBACK_20260515T212737Z.json)
+- Day-5 bake-off log: [`logs/day5_bakeoff_run_20260515T212737Z.log`](logs/day5_bakeoff_run_20260515T212737Z.log)
+
+### Supersession
+
+Day-4 entry [§17](#17--10-frontier-ensemble--19-baseline-bake-off-2026-05-15-phase-4-day-4--heterogeneous-robustness--openrouter-quota-event) measurements remain valid for the 87.50% / 70-block claim under the pre-fallback architecture. This entry is the new canonical measurement going forward.
+
+---
+
+*Last updated: 2026-05-15 (entry #18 — Phase 4 day 5 — FallbackVendorAdapter wrapped 10 ensemble seats with primary+backup routing. Re-measured ensemble block rate on the same 80 JBB-Behaviors held-out: **93.75%** (75/80, +6.25pp vs Day-4 87.50%), 0 errors. Gemini 3.1 Pro seat carried by internal Vertex SA chain (79/80 AI Studio 429s absorbed); OR `google/gemini-3.1-pro-preview` backup wired but $0 spent because Vertex handled the load. Kimi K2.6 and GLM 5.1 PROMOTED to opencode Zen primaries — validated empirically by the bake-off (OCZ 0 hard failures vs OR 13/7 respectively). Big Pickle has no fallback by design; produced 0 hard failures. DeepSeek V4 Pro is the worst-performing seat (6/80 OR hard failures); fallback to OCZ `deepseek-v4-flash-free` is honest degraded-family routing. Day-4 entry #17 measurements (87.50%, NVIDIA Nemotron 3 Super 120B 98.72%) remain valid under the pre-fallback architecture. Entry #16 (Phase 4 day 4 earlier): methodology fix rebuilding `NvidiaNemotronSafetyReasoning4BAdapter` from refusal-marker heuristic to a real JSON classifier. Day-3 entries #14 + #15: 11-defense bake-off on JBB-Behaviors and HarmBench cross-dataset. Day-2 entry #13: 6-vendor heterogeneous ensemble + `EnsembleJudge` + NIST RMF / EU AI Act Article 14 vote policy. Entries #10-#12 (2026-05-14 PM): defense chain architecture + JBB 95% measurement + Phase 3 deployment. Maintained by Pablo M. Suarez. External audit contributions credited per entry.*
