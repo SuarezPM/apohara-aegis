@@ -1132,11 +1132,31 @@ class FallbackVendorAdapter(VendorAdapter):
     Cost-ledger semantics
     =====================
 
-    The wrapper records ZERO cost itself; each underlying adapter
-    increments its own ``cumulative_cost_usd`` ledger only on the call
-    that actually issued. The returned verdict's ``latency_ms`` reflects
-    ONLY the route that returned a verdict — this matches the
-    user-facing "one vote per ensemble seat" contract.
+    The wrapper records ZERO cost in its OWN ledger; each underlying
+    adapter increments its own ``cumulative_cost_usd`` ledger only on
+    the call that actually issued. The returned verdict's
+    ``latency_ms`` reflects ONLY the route that returned a verdict —
+    this matches the user-facing "one vote per ensemble seat" contract.
+
+    For the ensemble's cost-cap machinery (``_evaluate_with_cap``,
+    ``cost_est``) to remain honest under wrapping, the wrapper exposes
+    ``cumulative_cost_usd`` as a ``@property`` that returns the SUM of
+    every wrapped route's ledger — so a seat's reported spend reflects
+    everything the seat actually paid across primary + backup attempts,
+    even though no single verdict is double-counted.
+
+    Gemini chain semantics
+    ======================
+
+    The Day-5 Gemini seat wraps ``GeminiAIStudioAdapter`` (primary)
+    with ``OpenRouterGeminiAdapter`` (backup). Because
+    ``GeminiAIStudioAdapter`` ALREADY has an internal AI Studio →
+    Vertex chain (see ``_parse_response``), the OR Gemini backup is
+    only reached when BOTH AI Studio AND Vertex return unavailable.
+    This three-level chain (AI Studio → Vertex → OR) is intentional:
+    AI Studio is cheapest, Vertex preserves Google provenance for the
+    Gemini Award, OR is the catch-all when both Google-native paths
+    are depleted.
 
     Label semantics
     ===============
@@ -1186,6 +1206,36 @@ class FallbackVendorAdapter(VendorAdapter):
     @property
     def model_name(self) -> str:
         return self._model_label or self._primary.model
+
+    @property
+    def cumulative_cost_usd(self) -> float:  # type: ignore[override]
+        # Forward to the SUM of every wrapped route's ledger so the
+        # ensemble's cost-cap + spend-reporting machinery stays honest
+        # under wrapping. Without this, ``EnsembleJudge._evaluate_with_cap``
+        # reads the wrapper's untouched base ``0.0`` ledger and caps never
+        # fire; ``cost_est = sum(ad.cumulative_cost_usd for ad in self.adapters)``
+        # reports ~$0 across the run and the audit trail lies about spend.
+        # See architect REVISE_WITH_FIXES finding 2026-05-15 PM (apohara-aegis #18).
+        return self._primary.cumulative_cost_usd + sum(
+            fb.cumulative_cost_usd for fb in self._fallbacks
+        )
+
+    @cumulative_cost_usd.setter
+    def cumulative_cost_usd(self, value: float) -> None:
+        # The base class initializer writes ``self.cumulative_cost_usd = 0.0``
+        # in ``super().__init__``; keep that write a no-op on the wrapper
+        # so the @property semantics above stay the only source of truth.
+        # Direct writes (which only happen from the base ``__init__``) are
+        # silently dropped because the inner adapters own their ledgers.
+        if value != 0.0:
+            # If something tries to set a non-zero on the wrapper directly,
+            # that's a logic bug elsewhere — log loudly rather than corrupt
+            # the cost picture silently.
+            logger.warning(
+                "FallbackVendorAdapter %r received direct cumulative_cost_usd "
+                "write of %.6f; ignoring (wrapper forwards to wrapped routes).",
+                self.name, value,
+            )
 
     # ------------------------------------------------------------------
     # Public driver — overrides VendorAdapter.evaluate entirely so the
@@ -1708,12 +1758,22 @@ class EnsembleJudge:
 
         if active_count < 3:
             # AD-6: too few active vendors — degrade to single-vendor
-            # mode. We look for the GeminiAIStudioAdapter verdict
-            # first (the documented fallback judge); otherwise use
-            # whatever active vendors remain.
+            # mode. We look for the Gemini seat verdict first (the
+            # documented fallback judge); otherwise use whatever active
+            # vendors remain. The check is on the seat-level vendor
+            # label rather than ``isinstance(ad, GeminiAIStudioAdapter)``
+            # because Day-5 seats are wrapped in ``FallbackVendorAdapter``
+            # (the isinstance would silently always return False, dead-
+            # coding the Gemini preference). See architect finding
+            # 2026-05-15 PM (apohara-aegis #18).
             fallback = None
             for ad, v in zip(self.adapters, results):
-                if isinstance(ad, GeminiAIStudioAdapter) and v.path not in (
+                vendor_label = getattr(ad, "vendor", "") or ""
+                is_gemini_seat = (
+                    vendor_label.startswith("gemini")
+                    or isinstance(ad, GeminiAIStudioAdapter)
+                )
+                if is_gemini_seat and v.path not in (
                     "unavailable", "out_of_budget"
                 ):
                     fallback = v

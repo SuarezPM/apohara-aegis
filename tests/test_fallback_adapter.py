@@ -399,3 +399,48 @@ def test_vendor_label_override() -> None:
     plain_wrapper = FallbackVendorAdapter(primary=primary, fallbacks=[backup])
     assert plain_wrapper.vendor_name == "ai_studio"
     assert plain_wrapper.model_name == "gemini-3.1-pro-preview"
+
+
+def test_cumulative_cost_usd_forwards_to_wrapped_routes() -> None:
+    """Architect REVISE_WITH_FIXES finding 2026-05-15 PM: wrapper's
+    ``cumulative_cost_usd`` must forward to the SUM of wrapped routes'
+    ledgers (not stay at 0.0 from base ``__init__``) so the ensemble's
+    cost-cap machinery and the run-level spend report stay honest.
+    """
+    primary = _FakeAdapter(
+        name="p", vendor="ai_studio", model="gemini-3.1-pro-preview",
+        verdict=_harmful_verdict(vendor="ai_studio", model="gemini-3.1-pro-preview"),
+    )
+    backup_0 = _FakeAdapter(
+        name="b0", vendor="openrouter", model="google/gemini-3.1-pro-preview",
+        verdict=_harmful_verdict(vendor="openrouter", model="google/gemini-3.1-pro-preview"),
+    )
+    backup_1 = _FakeAdapter(
+        name="b1", vendor="opencode_zen", model="gemini-3.1-pro",
+        verdict=_harmful_verdict(vendor="opencode_zen", model="gemini-3.1-pro"),
+    )
+    # Manually populate the inner adapters' ledgers (simulates real spend).
+    primary.cumulative_cost_usd = 1.23
+    backup_0.cumulative_cost_usd = 0.55
+    backup_1.cumulative_cost_usd = 0.12
+
+    wrapper = FallbackVendorAdapter(
+        primary=primary,
+        fallbacks=[backup_0, backup_1],
+        vendor_label="gemini-seat",
+        model_label="gemini-3.1-pro-preview",
+    )
+
+    # Wrapper's @property forwards to sum of inner ledgers.
+    assert wrapper.cumulative_cost_usd == pytest.approx(1.23 + 0.55 + 0.12)
+
+    # Non-zero direct writes are logged-and-dropped (the @property
+    # forwarder is the only source of truth).
+    wrapper.cumulative_cost_usd = 99.99   # logged warning, no state change
+    assert wrapper.cumulative_cost_usd == pytest.approx(1.23 + 0.55 + 0.12)
+
+    # Zero writes (from base ``super().__init__``) are silently accepted —
+    # the base initializer writes 0.0 once at construction and we don't
+    # want that to spam the log on every wrapper instantiation.
+    wrapper.cumulative_cost_usd = 0.0
+    assert wrapper.cumulative_cost_usd == pytest.approx(1.23 + 0.55 + 0.12)
