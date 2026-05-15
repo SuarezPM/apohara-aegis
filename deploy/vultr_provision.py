@@ -144,26 +144,41 @@ def _mask(secret: str) -> str:
 def load_user_data() -> str:
     """Read deploy/cloud-init.yaml and substitute operator env vars.
 
-    Performs four placeholder substitutions on the raw YAML before
+    Performs nine placeholder substitutions on the raw YAML before
     returning it:
 
     1. ``AEGIS_SSH_PUBKEY_PLACEHOLDER``      -> $AEGIS_SSH_PUBKEY (required).
     2. ``AEGIS_JUDGE_USER_PLACEHOLDER``      -> $AEGIS_JUDGE_USER (optional, default empty).
     3. ``AEGIS_JUDGE_PASS_HASH_PLACEHOLDER`` -> $AEGIS_JUDGE_PASS_HASH (optional, default empty).
     4. ``GEMINI_API_KEY_PLACEHOLDER``        -> $GEMINI_API_KEY (required, Phase 3).
+    5. ``OPENCODE_ZEN_API_KEY_PLACEHOLDER``  -> $OPENCODE_ZEN_API_KEY (required, Day 4 — Claude Opus 4.7 + GPT-5.5 + Big Pickle).
+    6. ``OPENROUTER_API_KEY_PLACEHOLDER``    -> $OPENROUTER_API_KEY (required, Day 4 — DeepSeek/Kimi/GLM/Qwen/Nemotron via OpenRouter).
+    7. ``MINIMAX_API_KEY_PLACEHOLDER``       -> $MINIMAX_API_KEY (required, Day 4 — MiniMax M2.7).
+    8. ``GROQ_API_KEY_PLACEHOLDER``          -> $GROQ_API_KEY (optional — Groq defense-tier adapters; if unset they return path='unavailable' at runtime and the EnsembleJudge tally drops them honestly).
+    9. ``NVIDIA_API_KEY_PLACEHOLDER``        -> $NVIDIA_API_KEY (optional — NVIDIA NIM defense-tier adapters; same honest fail-open semantics).
 
-    Honesty contract: the SSH pubkey AND the Gemini API key are
-    hard-required. If either is unset the function raises with an
-    actionable error message BEFORE the caller hits the Vultr API —
-    there is no silent fallback to root + password auth, and there is
-    no silent fallback to a judge container with no AI Studio
-    credentials (the live demo URL would otherwise serve a broken
-    judge that always returns ``path="unavailable"`` and silently
-    bypasses Gemini, defeating the whole Phase-3 stack).
+    Honesty contract: the SSH pubkey AND the four frontier-tier vendor
+    keys (Gemini, opencode Zen, OpenRouter, MiniMax) are hard-required.
+    If any is unset the function raises with an actionable error
+    message BEFORE the caller hits the Vultr API — there is no silent
+    fallback to root + password auth, and there is no silent fallback
+    to a judge container with no frontier-vendor credentials (the live
+    demo URL would otherwise serve a broken 10-frontier ensemble where
+    every adapter returns path='unavailable' and the ensemble falls
+    through to degraded-mode, defeating the whole Phase-4 stack).
 
-    Neither secret is ever written to a file on the operator's host
-    by this function. The substituted YAML is held in memory only and
-    fed to ``base64.b64encode`` for the Vultr ``user_data`` POST body.
+    Day-4 hardening note: the Groq + NVIDIA keys are OPTIONAL because
+    those adapters are NOT in the default 10-frontier ensemble — they
+    only matter if the operator deploys a Groq/NVIDIA defense-tier
+    proxy alongside. If the operator chooses the 10-frontier default,
+    those two empties are harmless (the corresponding adapters never
+    instantiate). The Honesty Log surfaces the masking of each key so
+    the operator can verify "I provisioned with all 5 frontier keys"
+    without exposing any literal value to the terminal scrollback.
+
+    No secret is ever written to a file on the operator's host by this
+    function. The substituted YAML is held in memory only and fed to
+    ``base64.b64encode`` for the Vultr ``user_data`` POST body.
     """
     path = Path(__file__).resolve().parent / "cloud-init.yaml"
     if not path.exists():
@@ -199,8 +214,70 @@ def load_user_data() -> str:
             "    export GEMINI_API_KEY='<your-AI-Studio-key>'\n"
             "Then re-run this script."
         )
-    # Honesty log: key length + first/last 4 only, never the value.
-    print(f"  gemini : {_mask(gemini_key)}", file=sys.stderr)
+
+    # Day-4 frontier-tier vendor keys (required for the 10-frontier
+    # ensemble's non-Gemini members to function in production).
+    required_day4_keys = {
+        "OPENCODE_ZEN_API_KEY": (
+            "Claude Opus 4.7 + GPT-5.5 + Big Pickle adapters need it; "
+            "without it 3 of the 10 ensemble members go unavailable."
+        ),
+        "OPENROUTER_API_KEY": (
+            "DeepSeek V4 Pro + Kimi K2.6 + GLM 5.1 + Qwen 3.6 Plus + "
+            "Nemotron 3 Super 120B all route through OpenRouter; "
+            "without it 5 of the 10 ensemble members go unavailable."
+        ),
+        "MINIMAX_API_KEY": (
+            "MiniMax M2.7 adapter needs it; without it 1 of the 10 "
+            "ensemble members goes unavailable."
+        ),
+    }
+    day4_resolved: dict[str, str] = {}
+    for env_name, why in required_day4_keys.items():
+        val = os.environ.get(env_name, "").strip()
+        if not val:
+            raise RuntimeError(
+                f"{env_name} env var is not set. Phase-4 Day-4 "
+                "deployment requires the 10-frontier ensemble's "
+                "vendor keys. "
+                f"{why}\n"
+                "Fix:\n"
+                "    source ~/.config/environment.d/98-apohara-aegis-keys.conf\n"
+                "    export GEMINI_API_KEY OPENCODE_ZEN_API_KEY OPENROUTER_API_KEY MINIMAX_API_KEY\n"
+                "Then re-run this script."
+            )
+        day4_resolved[env_name] = val
+
+    # Day-4 OPTIONAL secondary-tier keys (defense adapters, not in
+    # default ensemble — empty is acceptable).
+    optional_day4_keys = ("GROQ_API_KEY", "NVIDIA_API_KEY")
+    day4_optional: dict[str, str] = {}
+    for env_name in optional_day4_keys:
+        day4_optional[env_name] = os.environ.get(env_name, "").strip()
+
+    # Honesty log: mask each provisioned key so the operator can see
+    # "all 5 frontier keys present" without leaking the literals.
+    print(f"  gemini       : {_mask(gemini_key)}", file=sys.stderr)
+    print(
+        f"  opencode_zen : {_mask(day4_resolved['OPENCODE_ZEN_API_KEY'])}",
+        file=sys.stderr,
+    )
+    print(
+        f"  openrouter   : {_mask(day4_resolved['OPENROUTER_API_KEY'])}",
+        file=sys.stderr,
+    )
+    print(
+        f"  minimax      : {_mask(day4_resolved['MINIMAX_API_KEY'])}",
+        file=sys.stderr,
+    )
+    print(
+        f"  groq (opt)   : {_mask(day4_optional['GROQ_API_KEY'])}",
+        file=sys.stderr,
+    )
+    print(
+        f"  nvidia (opt) : {_mask(day4_optional['NVIDIA_API_KEY'])}",
+        file=sys.stderr,
+    )
 
     raw = raw.replace("AEGIS_SSH_PUBKEY_PLACEHOLDER", pubkey)
     raw = raw.replace(
@@ -212,6 +289,10 @@ def load_user_data() -> str:
         os.environ.get("AEGIS_JUDGE_PASS_HASH", "").strip(),
     )
     raw = raw.replace("GEMINI_API_KEY_PLACEHOLDER", gemini_key)
+    for env_name, val in day4_resolved.items():
+        raw = raw.replace(f"{env_name}_PLACEHOLDER", val)
+    for env_name, val in day4_optional.items():
+        raw = raw.replace(f"{env_name}_PLACEHOLDER", val)
     return raw
 
 
