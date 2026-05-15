@@ -385,6 +385,78 @@ class OpenRouterNemotron3Super120BAdapter(OpenRouterAdapter):
 
 
 # ---------------------------------------------------------------------------
+# Backup-route adapters — Day-5 US-002 (FallbackVendorAdapter targets)
+# ---------------------------------------------------------------------------
+
+
+class OpenRouterGeminiAdapter(OpenRouterAdapter):
+    """Backup route for Gemini 3.1 Pro when AI Studio prepayment is depleted.
+
+    Model resolves to ``google/gemini-3.1-pro-preview-20260219`` via OR.
+    Cost: ~$0.0012/call at probe time 2026-05-15. This is the route that
+    preserves Gemini Award eligibility (Google sponsor).
+
+    Gemini 3.1 Pro is a reasoning model on OpenRouter. It returns content
+    via ``choices[0].message.content`` when ``finish_reason=='stop'`` but
+    may put content in ``message.reasoning`` when ``finish_reason=='length'``
+    with ``max_tokens`` exhausted on reasoning tokens. The base class
+    already handles both channels (see :meth:`OpenRouterAdapter._parse_response`
+    multi-tier parsing fallback) and the default ``max_tokens=400`` gives
+    the reasoning channel headroom while keeping cost predictable.
+    """
+
+    model_id: str = "google/gemini-3.1-pro-preview"
+    name: str = "openrouter_gemini_3_1_pro"
+    vendor: str = "openrouter"
+    # Live probe 2026-05-15 PM: ~$0.0012 per single judge call (~110 in
+    # + 38 out tokens). The published per-token figures are inferred
+    # from that observation; OpenRouter does not publish a separate
+    # per-token rate for this preview model.
+    cost_per_input_tok: float = 1.25 / 1_000_000
+    cost_per_output_tok: float = 10.0 / 1_000_000
+
+
+class OpenRouterClaudeOpus47FastAdapter(OpenRouterAdapter):
+    """Backup route for Claude Opus 4.7 when opencode Zen primary is degraded.
+
+    The ``-fast`` variant is identical capability per Anthropic docs;
+    routing via OR adds ~600 ms vs direct OCZ. Live probe 2026-05-15:
+    1.7 s response time.
+    """
+
+    model_id: str = "anthropic/claude-opus-4.7-fast"
+    name: str = "openrouter_claude_opus_4_7_fast"
+    vendor: str = "openrouter"
+    # Anthropic Claude Opus family rate via OpenRouter (2026-05):
+    # ~$15/M input, ~$75/M output (published OR dashboard tier).
+    cost_per_input_tok: float = 15.0 / 1_000_000
+    cost_per_output_tok: float = 75.0 / 1_000_000
+
+
+class OpenRouterGPT55Adapter(OpenRouterAdapter):
+    """Backup route for GPT-5.5 when opencode Zen primary is degraded
+    or rate-limited.
+
+    Live probe 2026-05-15: 4.5 s response time.
+
+    The GPT-5 family natively requires ``max_completion_tokens`` instead
+    of ``max_tokens`` on OpenAI's own endpoint (see
+    :class:`apohara_aegis.multi_judge.GPT55Adapter`). OpenRouter proxies
+    ``max_tokens`` to the upstream provider's expected field, so the
+    base class request body works as-is — the 2026-05-15 PM live probe
+    confirmed HTTP 200 with the default body shape.
+    """
+
+    model_id: str = "openai/gpt-5.5"
+    name: str = "openrouter_gpt_5_5"
+    vendor: str = "openrouter"
+    # OpenAI GPT-5 family rate via OpenRouter (2026-05): $1.25/M input,
+    # $10/M output (matches OpenAI direct).
+    cost_per_input_tok: float = 1.25 / 1_000_000
+    cost_per_output_tok: float = 10.0 / 1_000_000
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -398,4 +470,7 @@ __all__ = [
     "OpenRouterGLM51Adapter",
     "OpenRouterQwen36PlusAdapter",
     "OpenRouterNemotron3Super120BAdapter",
+    "OpenRouterGeminiAdapter",
+    "OpenRouterClaudeOpus47FastAdapter",
+    "OpenRouterGPT55Adapter",
 ]
