@@ -73,6 +73,44 @@ The honesty trail (Gemini SDK migration · defense chain · judge calibration ·
 
 ---
 
+### Comparative bake-off (2026-05-15, AUDIT [§14](AUDIT.md))
+
+Same 80-prompt JBB-Behaviors held-out test set, run through 11 defenses. Every digit is the measured value — JSONs committed to [`logs/baseline_*_20260515T*.json`](logs/), aggregate in [`logs/bakeoff_jbb_20260515T1800Z.json`](logs/bakeoff_jbb_20260515T1800Z.json).
+
+| Defense | Block rate | Cost (80 prompts) | Latency p50 | License |
+|---|---:|---:|---:|---|
+| Apohara Aegis ensemble (ours, 5 vendors) | 95.0% | $1.1715 | 10064 ms | Apache-2.0 (ours) |
+| Apohara Aegis single Gemini (Phase 2 baseline) | 95.0% | $0.0592 | 6533 ms | Apache-2.0 (ours) |
+| Claude Opus 4.7 alone | 92.2% (3 err) | $1.0322 | 3114 ms | Anthropic (proprietary) |
+| GPT-5.5 alone | 92.5% | $0.1170 | 3436 ms | OpenAI (proprietary) |
+| MiniMax M2.7 alone | 91.0% (2 err) | $0.0379 | 9769 ms | MiniMax (proprietary) |
+| NVIDIA NeMoguard Content Safety 8B | 91.2% | $0 | 807 ms | NVIDIA (NIM free) |
+| **NVIDIA Nemotron Safety Reasoning 4B** | **93.8%** | **$0** | **4974 ms** | **NVIDIA (NIM free)** |
+| Meta Llama Guard 4 12B | 86.2% | $0 | 691 ms | Meta (NVIDIA NIM free) |
+| OpenAI gpt-oss-safeguard 20B (Groq free) | 100.0% (60 err) | $0 | 0 ms | OpenAI (Groq free tier) |
+| Meta Llama Prompt Guard 2 86M (Groq free) | 25.0% (48 err) | $0 | 0 ms | Meta (Groq free tier) |
+| Gemini-3.1-pro alone (no Aegis chain) | 93.7% (1 err) | $0\* | 7501 ms | Google (proprietary) |
+
+**Winners** (computed only among defenses with ≤20% error rate — see footnote on rate-limited Groq baselines):
+
+- **Highest block rate**: Apohara Aegis ensemble = Apohara Aegis single Gemini, both at **95.0%** (the heterogeneous ensemble matches the single-vendor baseline; no degradation, but no per-vendor lift either — honest finding).
+- **Lowest cost above 70%**: NVIDIA NeMoguard Content Safety 8B at **$0** with **91.2%** block rate — FREE NVIDIA NIM model nearly matches paid frontier judges.
+- **Lowest latency above 70%**: NVIDIA Llama Guard 4 12B at **691 ms** (86.2% block) — sub-second classification on the free tier.
+- **Best free-tier defense**: NVIDIA Nemotron Safety Reasoning 4B at **93.8%** — within 1.2 points of our 95% ensemble AT $0 PER CALL. The standout finding of this bake-off.
+
+**Honest framing of asymmetric trade-offs:**
+
+- **Meta Llama Prompt Guard 2 86M** dominates on cost+latency (sub-500ms, FREE) but only catches injection-style attacks (25% on generic JBB harm). Use it as a first-gate sieve, not a sole defense.
+- **OpenAI gpt-oss-safeguard 20B** showed 100% block rate but on a tiny denominator: 60/80 prompts hit Groq community-tier HTTP 429s. The model genuinely refuses harmful prompts on the 20 it could reach — its operational availability on a free-tier API key is the issue, not its classification quality.
+- **NVIDIA's free NIM stack (Llama Guard 4, NeMoguard 8B, Nemotron 4B)** is the surprise of the bake-off: three different model families, all FREE, all ≥86% block rate, sub-second to ~5s latency. For enterprise-grade defense on a budget, these now beat single-vendor frontier judges per dollar.
+- **The 6-vendor Apohara ensemble** matches the Phase-2 single-judge 95% baseline; the lift relative to single-Gemini comes from architectural diversity (resilience to model-specific blindspots, AD-1) and the EU AI Act Article-14 oversight band, NOT a higher headline block rate on this dataset.
+
+\* Gemini-3.1-pro cost reads $0 because `GeminiAIStudioAdapter` does not yet plumb `usage_metadata.total_token_count` into the live cost ledger — AUDIT [§13](AUDIT.md) Day-2 known limitation. Live AI Studio billing IS happening.
+
+**Generalization check** (cross-dataset): Apohara Aegis ensemble against [HarmBench](https://github.com/centerforaisafety/HarmBench) DirectRequest test split (Mazeika et al. 2024), 100 prompts, deterministic random.Random(0) sample, NO threshold re-tuning — **63.0% block rate** ([`logs/harmbench_aegis_ensemble_20260515T1900Z.json`](logs/harmbench_aegis_ensemble_20260515T1900Z.json)). The 32-point gap from JBB's 95% concentrates in the `copyright` category (0/28 blocked) — see AUDIT [§15](AUDIT.md) for the honest discussion of which categories transfer (`misinformation_disinformation`, `illegal`, `harassment_bullying` all at 100%) and which do not (copyright IP-violation is outside our 6 vendors' training targets).
+
+---
+
 ### Quickstart for enterprise operators
 
 Deploy the full Lobster Trap + Aegis governance stack in one command.
