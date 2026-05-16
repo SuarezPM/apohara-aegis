@@ -121,7 +121,7 @@ The `FallbackVendorAdapter` wrapper (commit `4267cf1`) tries each seat's primary
 
 | Metric | Day-4 RERUN (no fallback) | Day-5 FALLBACK | Δ |
 |--------|---------------------------|----------------|---|
-| Block rate | 87.50% (70/80) | **93.75% ± 2.7% (95% CI, n=80)** (75/80) | **+6.25pp** |
+| Block rate | 87.50% (70/80) | **93.75% (75/80, Wilson 95% CI [86.2%, 97.3%], n=80)** | **+6.25pp** |
 | Errored | 1 | **0** | -1 |
 | p50 latency | ~14000ms | 19740ms | +5740ms (fallback chains add ~one extra hop per degraded route) |
 | p99 latency | ~52000ms | 53438ms | ≈parity |
@@ -161,7 +161,7 @@ Extracted from [`logs/day5_bakeoff_run_20260515T212737Z.log`](logs/day5_bakeoff_
 
 ### Honest framing
 
-The +6.25pp ensemble improvement (87.50% → 93.75% ± 2.7% (95% CI, n=80)) came from three contributions:
+The +6.25pp ensemble improvement (87.50% → 93.75%, Wilson 95% CI [86.2%, 97.3%], n=80) came from three contributions:
 
 1. **Gemini Award eligibility restored.** AI Studio 429-failed 79/80 times (prepayment depleted), but the Vertex SA chain inside `GeminiAIStudioAdapter` handled the calls before the `FallbackVendorAdapter`'s OR Gemini backup ever needed to fire. `gemini_judge` was the deciding voice on all 75 of 75 blocked prompts. The OR Gemini backup is wired as the final safety net for the case when both Google-native paths fail (it cost $0 in this run because Vertex carried the load).
 2. **Kimi / GLM promotions.** OCZ-hosted Kimi K2.6 and GLM 5.1 produced **zero hard failures** across 80 prompts vs the OpenRouter routes' 13/7 hard failures respectively. Soft parse failures persist on the OCZ side (7 Kimi / 11 GLM) but the multi-tier parser recovered every one of them. The promotion was made on the route-quality evidence in the live probes; the bake-off log validated it.
@@ -234,7 +234,7 @@ Same 80-prompt JBB-Behaviors held-out test set as the Phase-2 95% baseline (AUDI
 
 - **The 10-frontier ensemble does NOT outperform the best individual frontier judge on absolute block rate**. Nemotron 3 Super 120B alone (98.72%) beats the 10-frontier ensemble (87.50%) on this dataset by 11 percentage points. **This is the load-bearing honest finding**: the ensemble's contribution is robustness + per-vendor attribution + dissent for HUMAN_REVIEW (EU AI Act Article 14 oversight band), NOT a per-prompt block-rate lift. The Day-3 6-vendor ensemble reached the same conclusion (AUDIT [§14](AUDIT.md) §1) — broader vendor coverage on Day 4 confirms the architectural property, it does not invert it. The ensemble's 87.5% is lower than 95% (Day-3 6-vendor) primarily because Gemini AI Studio was 80/80 unavailable during this run (quota exhausted; see AUDIT [§17](AUDIT.md) for the per-vendor agreement breakdown).
 - **Big Pickle = DeepSeek V4 Flash** (cross-ref Agent B commit `1b809a3`). Community sources (Reddit, HN, blog posts) attributed opencode Zen's `big-pickle` stealth-tier model to GLM-4.6; Agent B's live probe finds every response envelope returns `model: "deepseek-v4-flash"`, the DeepSeek-V4 production fingerprint, the DeepSeek-V4 reasoning-token shape. The bake-off measures Big Pickle (opencode Zen tier) at 97.50% and DeepSeek V4 Flash (OpenRouter explicit alias) at 93.51% on the same 80 prompts — consistent with the same model exposed via two different routing tiers; opencode Zen's stealth-tier path delivers a small but measurable lift.
-- **Nemotron 4B (REBUILT) at 95.00% — free**. The REBUILT version (commit `7600e23`, AUDIT [§16](AUDIT.md)) supersedes the Day-3 refusal-heuristic measurement (93.75% ± 2.7% (95% CI, n=80)); the methodology change is the contribution, not the +1.25pp delta. For an enterprise deployment that cannot pay $0.01/call for the ensemble, this single FREE NIM endpoint gets to within 4 percentage points of the canonical Mistral Medium 3 bonus row at zero per-call cost.
+- **Nemotron 4B (REBUILT) at 95.00% — free**. The REBUILT version (commit `7600e23`, AUDIT [§16](AUDIT.md)) supersedes the Day-3 refusal-heuristic measurement (93.75%, Wilson 95% CI [86.2%, 97.3%], n=80); the methodology change is the contribution, not the +1.25pp delta. For an enterprise deployment that cannot pay $0.01/call for the ensemble, this single FREE NIM endpoint gets to within 4 percentage points of the canonical Mistral Medium 3 bonus row at zero per-call cost.
 - **Mistral Medium 3 (bonus) at 97.50% / $0.0188 / 1.9s** is the new "best cost-per-block reliable" candidate. Outside the canonical 10-frontier roster because Pablo's Day-4 ensemble composition was locked before this bake-off, but a strong signal that the Mistral family deserves a future ensemble slot.
 - **2 OpenRouter rows († rate-limited)** — Kimi K2.6 (69% errored) and GLM 5.1 (30% errored) — exceed the 20% reliability bar from real upstream-model parse-failure patterns (the models emit reasoning prose without the `<think>` wrapper our OpenRouter parser expects), NOT credit exhaustion. The prompts that parsed cleanly had 96% block rates on both vendors. Documented honestly per AUDIT discipline.
 - **2 Groq defense rows (‡ rate-limited)** persist at >20% errored after Day-4 re-attempts — operational property of the free community-tier API surface, not classification quality.
