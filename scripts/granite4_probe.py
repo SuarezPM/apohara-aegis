@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""US-004 Granite Guardian 4 probe — ready to run once IBM watsonx project exists.
+"""US-004 Granite Guardian 4 probe — ready to run once Pablo onboards to dataplatform.
 
-MiniMax 2.7 confirmed (2026-05-16) that IBM Cloud API key login works, but
-watsonx.ai inference requires a `project_id` / `space_id` / `wml_instance_crn`
-that this account does not have. Project creation via API also fails because
-it requires a storage CRN that only auto-provisions through the UI signup
-flow.
+Audit-grade probe-skeleton kept in repo so the run is one command away the
+moment the dataplatform user profile exists. See AUDIT.md §21 for the full
+diagnosis trail.
 
-**UI step Pablo must do** (one-time, ~3 minutes):
+Blocker (2026-05-16): IBMid `698001M91J` has never signed into the
+`dataplatform.cloud.ibm.com` surface, so no user profile exists there. With
+no user profile, neither projects nor spaces can be created (programmatically
+or via UI) and inference rejects every container reference. Region is
+`au-syd`, not `us-south`.
 
-    1. Visit  https://cloud.ibm.com/
-    2. Catalog -> watsonx.ai -> "Try free for 30 days" (Lite plan)
-    3. The signup auto-creates a Cloud Object Storage instance + a default
-       project. Note the project_id from the project URL (e.g.
-       https://dataplatform.cloud.ibm.com/projects/abcd1234-... -> abcd1234-...)
+**UI step Pablo must do** (one-time, ~30 seconds):
 
-**Then run:**
+    1. Open https://dataplatform.cloud.ibm.com/ in any browser
+    2. Click "Log in", complete IBM SSO with the same IBMid
+    3. Accept the one-time terms dialog -> user profile auto-bootstraps
 
-    export IBM_API_KEY=...     # the IAM-compatible key (M...)
-    export IBM_PROJECT_ID=...  # from the UI step above
+`watsonx.ai Studio-pc` and a COS Lite instance (`apohara-cos`,
+guid `e342873f-fefb-472f-a881-01b0abe4e8d1`) are already attached. After
+step 3, create a space programmatically with the curl payload in
+AUDIT.md §21, then run:
+
+    export IBM_API_KEY=...     # IAM-compatible key
+    export IBM_PROJECT_ID=...  # space_id from the space-creation response
+    export IBM_REGION=au-syd   # optional; default is au-syd as of entry #21
     PYTHONPATH=. python3 scripts/granite4_probe.py
 
 The script runs 5 calls against a JBB-Behaviors subset and writes the log to
@@ -43,9 +49,11 @@ import urllib.request
 import urllib.error
 
 GRANITE_MODEL = "ibm/granite-4-h-small"
-WATSONX_REGION = "us-south"
+# Pablo's account is on au-syd (verified via /v2/resource_instances 2026-05-16);
+# override with IBM_REGION env var if a future key lives on a different region.
+WATSONX_REGION = os.environ.get("IBM_REGION", "au-syd")
 IAM_URL = "https://iam.cloud.ibm.com/identity/token"
-INFERENCE_URL = f"https://{WATSONX_REGION}.ml.cloud.ibm.com/ml/v1/text/generation?version=2023-05-29"
+INFERENCE_URL = f"https://{WATSONX_REGION}.ml.cloud.ibm.com/ml/v1/text/generation?version=2024-03-14"
 
 # 5 JBB-Behaviors-style prompts spanning the OWASP LLM Top 10 categories.
 # Each prompt is harmful-on-purpose; Granite Guardian 4 should classify them

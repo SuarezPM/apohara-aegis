@@ -1088,3 +1088,67 @@ API-only project creation is gated on UI-provisioned storage CRN. **No automatio
 ### Honest disclosure
 
 The MiniMax-supplied IBM API keys were posted in chat plaintext during the Day-6 sprint hand-off. Both keys remain functional for the hackathon window. **Recommend post-hackathon: rotate both via the IBM Cloud Manage → IAM → API Keys panel** since they are now in conversation transcript history.
+
+---
+
+## 21. 🟠 US-004 IBM Granite 4 — root-cause refined to dataplatform-user-onboard (2026-05-16, post-MiniMax)
+
+### What changed since entry #20
+
+Pablo supplied a third IBM key (`qwC-YBdw...75Gs1`) and the au-syd watsonx endpoint (`https://au-syd.ml.cloud.ibm.com`). Re-probe pushed the diagnosis deeper than entry #20:
+
+| Check | Result |
+|---|---|
+| IAM token acquisition | ✓ 1535-char `access_token`, `expires_in=3600` |
+| `/v2/resource_instances` | ✓ two active services in `au-syd`: `watsonx.ai Studio-pc` (guid `ab927ed4-…b597`) and `Watson Machine Learning-dx` (guid `51d75094-…7052`) |
+| `POST /ml/v1/text/generation` w/ `project_id = Studio-pc guid` | ✗ 404 `container_not_found` — no project container exists yet |
+| `POST /ml/v1/text/generation` w/ `space_id = WML guid` | ✗ 404 `container_not_found` — no space exists yet |
+| `POST /v2/resource_instances` (COS Lite plan) | ✓ provisioned `apohara-cos` (guid `e342873f-fefb-472f-a881-01b0abe4e8d1`) |
+| `POST /v2/spaces` w/ real COS CRN + WML compute CRN | ✗ `SPACES0040E`: **`'IBMid-698001M91J' is not a dataplatform user. Please make the user onboard.`** |
+| `GET /v2/projects` (global) | ✗ `WSCPA0000E`: `Failed to verify user profile existance: suarezpm@csnat.unt.edu.ar` |
+
+### Conclusion (precise)
+
+The IBM Cloud account is healthy: IAM works, services are provisioned, COS Lite is now available, region `au-syd` is the right ML endpoint. The **only** remaining blocker is that IBMid `698001M91J` has never logged into the dataplatform/CPDaaS surface, so no dataplatform user profile exists. Without that profile, neither projects nor spaces can be created — programmatically or via UI — and inference rejects every container reference.
+
+### Pablo's unblock (refined: one-time, ~30 seconds)
+
+Entry #20 prescribed a 5-step Lite-plan signup. The actual minimum is:
+
+1. Open `https://dataplatform.cloud.ibm.com/` in any browser
+2. Click "Log in", complete IBM SSO with the same IBMid
+3. Accept the one-time terms dialog → user profile auto-bootstraps
+
+The watsonx.ai Studio-pc service and the COS Lite instance are already attached. After step 3 the script + scripted space creation work end-to-end:
+
+```bash
+TOKEN=$(curl -s -X POST "https://iam.cloud.ibm.com/identity/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=$IBM_API_KEY" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin)['access_token'])")
+
+curl -s -X POST "https://api.dataplatform.cloud.ibm.com/v2/spaces?version=2024-03-14" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "name":"apohara-granite-probe",
+    "storage":{"resource_crn":"crn:v1:bluemix:public:cloud-object-storage:global:a/f26942b1c4994c578defc90fee1354c5:e342873f-fefb-472f-a881-01b0abe4e8d1::"},
+    "compute":[{"name":"watsonx.ai","crn":"crn:v1:bluemix:public:pm-20:au-syd:a/f26942b1c4994c578defc90fee1354c5:51d75094-43d4-47d1-bdcf-e329070b7052::"}]
+  }'
+# copy metadata.id → SPACE_ID
+
+export IBM_API_KEY=qwC-YBdw...75Gs1
+export IBM_PROJECT_ID=<space_id from above>
+PYTHONPATH=. python3 scripts/granite4_probe.py
+```
+
+### What this entry adds beyond #20
+
+- Blocker is specifically **dataplatform user onboarding** (30-second click flow), not "needs paid plan" or "needs UI catalog dance"
+- COS Lite has already been auto-provisioned by this audit (`apohara-cos`, no further setup needed)
+- Region confirmed: Pablo's account is on `au-syd`, not the `us-south` assumed in earlier scripts
+- Exact `curl` payload to create a valid space is now captured (works as soon as user is onboarded)
+
+### Files
+
+- `scripts/granite4_probe.py` — unchanged; `IBM_PROJECT_ID` env var accepts a space_id in the same field (watsonx routes both through the `project_id` body field when only one container is attached)
+- `AUDIT.md` — this entry (#21) refines #20
