@@ -9,6 +9,12 @@ __pycache__/
 # Ephemeral JBB defense reports (regenerable per run)
 logs/jbb_defense_report_*.json
 
+# HarmBench subset runner: cached upstream CSV + per-run stdout log
+# (the JSON output is the canonical artifact; the .csv is just a
+# download cache and the .log is the live stdout tail).
+logs/.harmbench_text_test.csv
+logs/harmbench_subset40_*.log
+
 # OS
 .DS_Store
 Thumbs.db
