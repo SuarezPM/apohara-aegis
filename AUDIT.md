@@ -1044,3 +1044,47 @@ None — this entry is additive documentation. Entry #18 measurement remains can
 ---
 
 *Last updated: 2026-05-16 (entry #19 — Inti Fusion US-001 — README hardening with CI bands, OWASP LLM 2026 mapping, EU AI Act 78-day countdown banner, and BYOS→BYOK source attestation per Anthropic Section 3.7. Entry #18 — Phase 4 day 5 — FallbackVendorAdapter wrapped 10 ensemble seats with primary+backup routing. Re-measured ensemble block rate on the same 80 JBB-Behaviors held-out: **93.75% ± 2.7% (95% CI, n=80)** (75/80, +6.25pp vs Day-4 87.50%), 0 errors. Re-measured ensemble block rate on the same 80 JBB-Behaviors held-out: **93.75% ± 2.7% (95% CI, n=80)** (75/80, +6.25pp vs Day-4 87.50%), 0 errors. Gemini 3.1 Pro seat carried by internal Vertex SA chain (79/80 AI Studio 429s absorbed); OR `google/gemini-3.1-pro-preview` backup wired but $0 spent because Vertex handled the load. Kimi K2.6 and GLM 5.1 PROMOTED to opencode Zen primaries — validated empirically by the bake-off (OCZ 0 hard failures vs OR 13/7 respectively). Big Pickle has no fallback by design; produced 0 hard failures. DeepSeek V4 Pro is the worst-performing seat (6/80 OR hard failures); fallback to OCZ `deepseek-v4-flash-free` is honest degraded-family routing. Day-4 entry #17 measurements (87.50%, NVIDIA Nemotron 3 Super 120B 98.72%) remain valid under the pre-fallback architecture. Entry #16 (Phase 4 day 4 earlier): methodology fix rebuilding `NvidiaNemotronSafetyReasoning4BAdapter` from refusal-marker heuristic to a real JSON classifier. Day-3 entries #14 + #15: 11-defense bake-off on JBB-Behaviors and HarmBench cross-dataset. Day-2 entry #13: 6-vendor heterogeneous ensemble + `EnsembleJudge` + NIST RMF / EU AI Act Article 14 vote policy. Entries #10-#12 (2026-05-14 PM): defense chain architecture + JBB 95% measurement + Phase 3 deployment. Maintained by Pablo M. Suarez. External audit contributions credited per entry.*
+
+---
+
+## 20. 🟠 US-004 IBM Granite 4 probe — confirmed UI-only blocker (2026-05-16)
+
+### What MiniMax 2.7 attempted
+
+- Installed `ibmcloud` CLI locally
+- Verified IAM token acquisition with key `MiBzccYW...`: ✓ access_token returned
+- Listed watsonx foundation models: ✓ `ibm/granite-4-h-small` visible in catalog
+- Attempted inference via `/ml/v1/text/generation`: ✗ HTTP 400 "Missing either space_id or project_id or wml_instance_crn"
+- Attempted to list existing projects: returned empty / errored
+- Attempted to create a project via `/transactional/v2/projects`: HTTP 400 "Missing or Invalid Data" — requires a storage CRN that only auto-provisions during the watsonx.ai UI signup
+
+### Confirmed by Claude Code re-probe (2026-05-16 post-MiniMax)
+
+Same blocker, independently verified. The hard requirement is **one** of:
+- `project_id` (created via UI signup at watsonx.ai Lite — free 30-day trial)
+- `space_id` (deployment space — requires a paid plan)
+- `wml_instance_crn` (provisioned watsonx ML instance CRN — also requires a plan or UI signup)
+
+API-only project creation is gated on UI-provisioned storage CRN. **No automation path is available.**
+
+### Pablo's unblock (one-time, ~3 minutes)
+
+1. Visit https://cloud.ibm.com/
+2. Catalog → watsonx.ai → "Try free for 30 days" (Lite plan, no credit card)
+3. After signup the platform auto-provisions Cloud Object Storage + a default project
+4. Copy `project_id` from the project URL (e.g. `https://dataplatform.cloud.ibm.com/projects/<project_id>`)
+5. Run:
+   ```bash
+   export IBM_API_KEY=<the M... key>
+   export IBM_PROJECT_ID=<from step 4>
+   PYTHONPATH=. python3 scripts/granite4_probe.py
+   ```
+6. Output log lands at `logs/granite4_probe_n5_<ts>.json` with block rate, per-prompt verdicts, latency stats. Then update apohara-inti comparison-table Granite Guardian row from "TBD" to the measured value.
+
+### Files added
+
+- `scripts/granite4_probe.py` (~180 LOC, urllib-only no extra deps; refuses to fabricate results if env vars are missing)
+
+### Honest disclosure
+
+The MiniMax-supplied IBM API keys were posted in chat plaintext during the Day-6 sprint hand-off. Both keys remain functional for the hackathon window. **Recommend post-hackathon: rotate both via the IBM Cloud Manage → IAM → API Keys panel** since they are now in conversation transcript history.
