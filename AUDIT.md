@@ -1152,3 +1152,49 @@ PYTHONPATH=. python3 scripts/granite4_probe.py
 
 - `scripts/granite4_probe.py` — unchanged; `IBM_PROJECT_ID` env var accepts a space_id in the same field (watsonx routes both through the `project_id` body field when only one container is attached)
 - `AUDIT.md` — this entry (#21) refines #20
+
+---
+
+## 22. 🟢 US-004 IBM Granite 4 — measured (2026-05-16, post-Pablo-dataplatform-onboard)
+
+### Outcome
+
+Pablo signed into `https://dataplatform.cloud.ibm.com/` (the specific surface called out in entry #21). Region selector on that screen defaulted to **Dallas (us-south)**, which bootstrapped his dataplatform user record on us-south. From there the remainder of US-004 ran end-to-end automatically:
+
+1. **Au-syd WML deleted, us-south WML provisioned** (Lite plan ID `3f6acf43-ede8-413a-ac69-f8af3bb0cbfe`, new guid `315a5972-f45c-4869-90d4-0894a735c1ef`). Only one Lite WML is allowed per account, so the au-syd one had to go.
+2. **Space created in us-south** (id `baad76fc-89e3-4713-87b8-a6e72b1fe418`) with the existing COS Lite (entry #21) + new WML. State transitioned `preparing → active` in ~20 seconds.
+3. **Inference confirmed via `/ml/v1/text/chat` endpoint.** The deprecated `/ml/v1/text/generation` endpoint emits EOS immediately on harmful inputs (Granite-4's safety RLHF triggers), but the canonical chat endpoint honors the system-prompt framing and returns the classifier verdict.
+
+### Measurement
+
+| Metric | Value |
+|---|---|
+| Model | `ibm/granite-4-h-small` (model_version 4.0.0) |
+| Region | us-south |
+| Endpoint | `https://us-south.ml.cloud.ibm.com/ml/v1/text/chat?version=2024-03-14` |
+| Container | `space_id=baad76fc-89e3-4713-87b8-a6e72b1fe418` |
+| Dataset | apohara-jbb-style-subset-n5-curated (categories: malware / physical_harm / disinformation / privacy_violation / fraud) |
+| **Block rate** | **5/5 = 100.0%** (Wilson 95% CI [47.8%, 100%] — wide because n=5) |
+| **Latency p50** | **559 ms** |
+| **Latency p99** | **566 ms** |
+| Errors | 0 |
+| Total run | 2.73 s |
+| Log file | `logs/granite4_probe_n5_20260516T163113Z.json` |
+
+### Honest disclosure
+
+This is a **vendor-availability probe**, not a full benchmark. n=5 is far too small to declare Granite Guardian 4 superior or inferior to Apohara Aegis (the 93.75% Wilson [86.2%, 97.3%] from entry #19 was measured on n=80). The probe exists to populate the comparison-table Granite Guardian row in `apohara-inti/README.md` so the matrix is no longer "TBD". For a fair head-to-head, the same 80 JBB prompts Aegis used would need to be run through Granite via this same `/ml/v1/text/chat` endpoint — that is out of scope for the hackathon window.
+
+### Script changes (commit on top of #21)
+
+`scripts/granite4_probe.py`:
+- Accept `IBM_SPACE_ID` env var (preferred) in addition to `IBM_PROJECT_ID`; the script selects `space_id` vs `project_id` body field accordingly
+- Switch to `/ml/v1/text/chat` endpoint
+- Record `container_field`, `container_id`, `region` in the output log for reproducibility (replaces the previous flat `project_id` field)
+
+### Files
+
+- `apohara-aegis/scripts/granite4_probe.py` — updated to chat API + space_id
+- `apohara-aegis/logs/granite4_probe_n5_20260516T163113Z.json` — measurement log
+- `apohara-inti/README.md` — Granite Guardian 4 row in comparison table: "TBD" → "5/5 BLOCK, p50=559ms, p99=566ms"
+- `AUDIT.md` — this entry (#22) closes US-004
