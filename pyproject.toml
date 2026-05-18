@@ -1,3 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+# Restrict package discovery to the actual library directory so
+# setuptools auto-discovery does not flatten ``tests/`` / ``scripts/``
+# / ``configs/`` into the wheel and crash with the multi-top-level
+# error. Phase-3 priority A install probe (2026-05-18) surfaced the
+# missing block — adding it enables ``pip install
+# git+https://...apohara-aegis@main`` to succeed.
+include = ["apohara_aegis*"]
+
 [project]
 name = "apohara-aegis"
 version = "0.1.0"
