@@ -1,0 +1,20 @@
+{
+  "framing_note": "Orchestration measurement; LLM calls mocked to fixed 10ms. Real vendor latencies measured separately in apohara-aegis/logs/baseline_aegis-ensemble-*.json.",
+  "iterations": 1000,
+  "llm_stub_delay_ms": 10.0,
+  "stages": {
+    "detect_p50_ms": 0.026936002541333437,
+    "detect_p99_ms": 0.05054722132626921,
+    "enforce_p50_ms": 0.003962006303481758,
+    "enforce_p99_ms": 0.008416612981818616,
+    "forensics_p50_ms": 0.10504199599381536,
+    "forensics_p99_ms": 0.192162400635425,
+    "judge_p50_ms": 10.159055993426591,
+    "judge_p99_ms": 10.300071467936505
+  },
+  "total_p50_ms": 10.294490493834019,
+  "total_p95_ms": 10.431675110885408,
+  "total_p99_ms": 10.521121517231222,
+  "ts": "2026-05-18T21:27:12.678675Z",
+  "wall_elapsed_s": 10.30151051300345
+}
