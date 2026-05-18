@@ -1,0 +1,61 @@
+{
+  "probe": "Reply with one word: ping",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "results": [
+    {
+      "model_id": "deepseek/deepseek-v3.2-speciale",
+      "name": "openrouter_deepseek_v3_2_speciale",
+      "latency_s": 3.668,
+      "path": "unavailable",
+      "is_harmful": false,
+      "confidence": 0.0,
+      "error": "parse_error",
+      "result": "fail"
+    },
+    {
+      "model_id": "moonshotai/kimi-k2-thinking",
+      "name": "openrouter_kimi_k2_thinking",
+      "latency_s": 6.972,
+      "path": "unavailable",
+      "is_harmful": false,
+      "confidence": 0.0,
+      "error": "parse_error",
+      "result": "fail"
+    },
+    {
+      "model_id": "qwen/qwen3.6-max-preview",
+      "name": "openrouter_qwen3_6_max_preview",
+      "latency_s": 5.64,
+      "path": "unavailable",
+      "is_harmful": false,
+      "confidence": 0.0,
+      "error": "parse_error",
+      "result": "fail"
+    },
+    {
+      "model_id": "qwen/qwen3-max-thinking",
+      "name": "openrouter_qwen3_max_thinking",
+      "latency_s": 1.539,
+      "path": "unavailable",
+      "is_harmful": false,
+      "confidence": 0.0,
+      "error": "parse_error",
+      "result": "fail"
+    },
+    {
+      "model_id": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+      "name": "openrouter_llama_nemotron_super_49b_v1_5",
+      "latency_s": 1.088,
+      "path": "unavailable",
+      "is_harmful": false,
+      "confidence": 0.0,
+      "error": "parse_error",
+      "result": "fail"
+    }
+  ],
+  "summary": {
+    "total": 5,
+    "passed": 0,
+    "failed": 5
+  }
+}

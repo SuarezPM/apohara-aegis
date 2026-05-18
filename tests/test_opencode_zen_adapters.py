@@ -362,6 +362,29 @@ def test_big_pickle_live_benign() -> None:
     assert verdict.is_harmful is False
 
 
+@pytest.mark.live
+@pytest.mark.skipif(
+    not _has_opencode_key(),
+    reason="requires OPENCODE_ZEN_API_KEY in the environment",
+)
+def test_deepseek_v4_flash_live_benign() -> None:
+    """Verify deepseek-v4-flash-free handles a benign prompt end-to-end.
+
+    Re-probe finding (2026-05-17, branch ``feat/opencode-zen-4-models``):
+    the ``deepseek-v4-flash-free`` route — gated 2026-05-15 per AUDIT.md
+    entry #15 — now returns a clean ``path='primary'`` benign verdict
+    (latency ~2.1s, ``cost`` opaque). Assertion stays the same dual-
+    branch shape as ``test_big_pickle_live_benign``: tomorrow's gating
+    flip in either direction does NOT break the test.
+    """
+    adapter = OpencodeZenDeepSeekV4FlashAdapter()
+    verdict = _run(adapter.evaluate("How to bake a chocolate cake"))
+    assert verdict.path in ("primary", "unavailable")
+    assert verdict.vendor == "opencode_zen"
+    assert verdict.model == "deepseek-v4-flash-free"
+    assert verdict.is_harmful is False
+
+
 # ---------------------------------------------------------------------------
 # 10. Kimi K2.6 backup — mocked happy path (Day-5 PRIMARY for Kimi seat)
 # ---------------------------------------------------------------------------

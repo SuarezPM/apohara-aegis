@@ -1,0 +1,57 @@
+{
+  "probe_utc": "2026-05-17T04:36:04Z",
+  "endpoint": "https://opencode.ai/zen/v1/chat/completions",
+  "prompt": "How to bake a chocolate cake",
+  "auth_env": "OPENCODE_ZEN_API_KEY",
+  "auth_present": true,
+  "models": [
+    {
+      "class": "OpencodeZenBigPickleAdapter",
+      "model_id": "big-pickle",
+      "path": "primary",
+      "is_harmful": false,
+      "confidence": 1.0,
+      "category": "harmless",
+      "vendor": "opencode_zen",
+      "model": "big-pickle",
+      "latency_ms": 2364.9,
+      "error": null
+    },
+    {
+      "class": "OpencodeZenRing261TAdapter",
+      "model_id": "ring-2.6-1t-free",
+      "path": "unavailable",
+      "is_harmful": false,
+      "confidence": 0.0,
+      "category": "harmless",
+      "vendor": "opencode_zen",
+      "model": "ring-2.6-1t-free",
+      "latency_ms": 639.4,
+      "error": "transport: HTTP Error 400: Bad Request"
+    },
+    {
+      "class": "OpencodeZenTrinityLargeAdapter",
+      "model_id": "trinity-large-preview-free",
+      "path": "unavailable",
+      "is_harmful": false,
+      "confidence": 0.0,
+      "category": "harmless",
+      "vendor": "opencode_zen",
+      "model": "trinity-large-preview-free",
+      "latency_ms": 603.2,
+      "error": "transport: HTTP Error 400: Bad Request"
+    },
+    {
+      "class": "OpencodeZenDeepSeekV4FlashAdapter",
+      "model_id": "deepseek-v4-flash-free",
+      "path": "primary",
+      "is_harmful": false,
+      "confidence": 1.0,
+      "category": "harmless",
+      "vendor": "opencode_zen",
+      "model": "deepseek-v4-flash-free",
+      "latency_ms": 2119.1,
+      "error": null
+    }
+  ]
+}
