@@ -214,21 +214,25 @@ def test_ensemble_cost_cap_excludes_overbudget_vendor() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_default_ensemble_is_13_seat_frontier() -> None:
-    """`make_default_ensemble` returns the canonical 13-seat frontier ensemble.
+def test_default_ensemble_is_14_seat_frontier() -> None:
+    """`make_default_ensemble` returns the 13-seat frontier + 1 Mythos slot = 14 total.
 
     Construction-only smoke — no network calls. Asserts (Day-5 US-003 +
-    Phase-3 priority A 2026-05-18):
+    Phase-3 priority A 2026-05-18 + US-78 Mythos reserved slot):
 
-    * Exactly 13 adapters, each wrapped in :class:`FallbackVendorAdapter`
-      so the seat survives a primary-route degradation by transparently
-      routing through ordered backups. (Day-4 had 10 seats; Phase-3
-      priority A added Mistral Large 2411, Grok-2 1212, and Perplexity
-      Sonar Large 128k Online before the Big Pickle stealth tail.
-      Headline rounds to "12 vendors" because Big Pickle is a stealth-
-      tier alias.)
-    * Seat-level (vendor_label, model_label) order matches the Day-5
-      seat map documented in README §Day-5 and AUDIT entry #18.
+    * Exactly 14 adapters: the first 13 are each wrapped in
+      :class:`FallbackVendorAdapter` so the seat survives a primary-route
+      degradation by transparently routing through ordered backups
+      (Day-4 had 10 seats; Phase-3 priority A added Mistral Large 2411,
+      Grok-2 1212, and Perplexity Sonar Large 128k Online before the
+      Big Pickle stealth tail — headline rounds to "12 vendors" because
+      Big Pickle is a stealth-tier alias). Seat 14 (index 13) is the
+      reserved :class:`MythosAttackerAdapter` slot — INACTIVE in
+      production until Claude-for-OS / Glasswing approval and credential
+      provisioning (see ``MYTHOS_READY.md``).
+    * Seat-level (vendor_label, model_label) order for the 13 active
+      seats matches the Day-5 seat map documented in README §Day-5 and
+      AUDIT entry #18 (with the Phase-3 priority A tail).
     * Each seat's PRIMARY route is the adapter class documented in the
       Day-5 seat map (Kimi K2.6 and GLM 5.1 are intentionally promoted
       to opencode Zen primaries; their OpenRouter siblings are backups).
@@ -249,6 +253,7 @@ def test_default_ensemble_is_13_seat_frontier() -> None:
         GroqLlamaPromptGuardAdapter,
         MiniMaxM27Adapter,
     )
+    from apohara_aegis.mythos_slot import MythosAttackerAdapter  # noqa: PLC0415
     from apohara_aegis.opencode_zen_adapters import (  # noqa: PLC0415
         OpencodeZenBigPickleAdapter,
         OpencodeZenGLM51Adapter,
@@ -265,20 +270,31 @@ def test_default_ensemble_is_13_seat_frontier() -> None:
 
     e = make_default_ensemble()
 
-    # 13 seats, all FallbackVendorAdapter wrappers. Phase-3 priority A
-    # (2026-05-18) added 3 frontier seats (Mistral Large 2411, Grok-2
-    # 1212, Perplexity Sonar Large 128k Online) to the prior 10-seat
-    # composition. The headline rounds to "12 vendors" because Big
-    # Pickle is a stealth-tier alias.
-    assert len(e.adapters) == 13, (
-        f"expected exactly 13 frontier seats post Phase-3 expansion, "
+    # 14 seats: 13 active FallbackVendorAdapter wrappers (Day-4 10 + Phase-3
+    # priority A's 3 OpenRouter additions) + 1 reserved MythosAttackerAdapter
+    # (US-78). The Phase-3 priority A growth landed in ad228bf/fce5db8;
+    # Mythos appends as seat 14. Headline still rounds to "12 vendors"
+    # because Big Pickle is a stealth-tier alias and Mythos is inactive
+    # until Claude-for-OS / Glasswing approval.
+    assert len(e.adapters) == 14, (
+        f"expected exactly 14 seats (13 frontier + Mythos reserved), "
         f"got {len(e.adapters)}"
     )
-    for got in e.adapters:
+
+    # First 13 must be FallbackVendorAdapter wrappers; seat 14 (index 13)
+    # is MythosAttackerAdapter.
+    active_seats = e.adapters[:13]
+    mythos_seat = e.adapters[13]
+    for got in active_seats:
         assert isinstance(got, FallbackVendorAdapter), (
-            f"every default seat must be a FallbackVendorAdapter, "
+            f"every active frontier seat must be a FallbackVendorAdapter, "
             f"got {type(got).__name__}"
         )
+    assert isinstance(mythos_seat, MythosAttackerAdapter), (
+        f"seat 14 (index 13) must be MythosAttackerAdapter, "
+        f"got {type(mythos_seat).__name__}"
+    )
+    assert mythos_seat.name == "mythos-glasswing"
 
     # Seat-level (vendor_label, model_label) order — matches the Day-5
     # seat map in AUDIT entry #18 + Phase-3 priority A 2026-05-18 tail.
@@ -300,7 +316,7 @@ def test_default_ensemble_is_13_seat_frontier() -> None:
         ),
         ("big-pickle-seat", "big-pickle"),
     ]
-    got_seat_labels = [(a.vendor, a.model) for a in e.adapters]
+    got_seat_labels = [(a.vendor, a.model) for a in active_seats]
     assert got_seat_labels == expected_seat_labels, (
         f"seat label order mismatch:\n  got:  {got_seat_labels}\n"
         f"  want: {expected_seat_labels}"
@@ -325,27 +341,28 @@ def test_default_ensemble_is_13_seat_frontier() -> None:
         OpenRouterPerplexitySonarLargeAdapter,    # Phase-3 priority A
         OpencodeZenBigPickleAdapter,
     ]
-    for seat, want in zip(e.adapters, expected_primary_types):
+    for seat, want in zip(active_seats, expected_primary_types):
         primary = seat._primary  # noqa: SLF001
         assert isinstance(primary, want), (
             f"primary route mismatch for seat {seat.vendor!r}: "
             f"got {type(primary).__name__}, expected {want.__name__}"
         )
 
-    # Vote thresholds — Phase-3 priority A grew N from 10 → 13, so the
+    # Vote thresholds — Phase-3 priority A grew N from 10 → 13, then US-78
+    # added the Mythos reserved slot for a total of 14. The
     # ``_scale_thresholds_for_adapter_count`` helper proportionally
-    # raises the ladder to ``{high: 13, med: 9, human_review: 4}``
+    # raises the ladder to ``{high: 14, med: 10, human_review: 4}``
     # (vs the Day-4 ``{high: 10, med: 6, human_review: 3}`` canonical
     # N=10 default). ``DEFAULT_VOTE_THRESHOLDS`` itself stays pinned at
     # the N=10 canonical Day-4 values for back-compat with existing
     # consumers that import the constant directly.
-    assert e.vote_thresholds == {"high": 13, "med": 9, "human_review": 4}
+    assert e.vote_thresholds == {"high": 14, "med": 10, "human_review": 4}
     assert DEFAULT_VOTE_THRESHOLDS == {
         "high": 10, "med": 6, "human_review": 3,
     }
 
     # Groq defense adapters are NOT seats in the default ensemble.
-    seat_primary_types = {type(seat._primary) for seat in e.adapters}  # noqa: SLF001
+    seat_primary_types = {type(seat._primary) for seat in active_seats}  # noqa: SLF001
     assert GroqGptOssSafeguardAdapter not in seat_primary_types
     assert GroqLlamaPromptGuardAdapter not in seat_primary_types
 

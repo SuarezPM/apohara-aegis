@@ -1418,6 +1418,7 @@ def make_default_adapters() -> list[VendorAdapter]:
         OpencodeZenNemotron3SuperAdapter,
         OpencodeZenQwen36PlusAdapter,
     )
+    from apohara_aegis.mythos_slot import MythosAttackerAdapter  # noqa: PLC0415
     # Day-5 (2026-05-15): every seat wrapped in FallbackVendorAdapter so
     # the ensemble keeps a seat available even when its primary route
     # degrades. The wrapper's identity (vendor_label / model_label) is
@@ -1513,6 +1514,16 @@ def make_default_adapters() -> list[VendorAdapter]:
             vendor_label="big-pickle-seat",
             model_label="big-pickle",
         ),
+        # Seat 14 (0-indexed: 13) — Mythos reserved slot, appended after
+        # Day-4's 10 frontier seats + Phase-3 priority A's 3 OpenRouter
+        # additions (Mistral Large 2411, Grok-2 1212, Perplexity Sonar).
+        # INACTIVE in production: _available() returns False unless
+        # APOHARA_MYTHOS_ENABLED=1 AND a credential env var is set.
+        # The ensemble loop short-circuits on _available()==False and
+        # returns _unavailable_verdict("not_configured") without raising.
+        # Apohara has NOT been granted Mythos access; this seat activates
+        # only upon Claude for Open Source / Glasswing program approval.
+        MythosAttackerAdapter(),
     ]
 
 
