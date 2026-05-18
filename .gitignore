@@ -18,3 +18,7 @@ logs/harmbench_subset40_*.log
 # OS
 .DS_Store
 Thumbs.db
+
+# Maintainer-only private notes (NEVER commit)
+CLAUDE.local.md
+CLAUDE.local.*
