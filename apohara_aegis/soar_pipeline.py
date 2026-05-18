@@ -10,13 +10,14 @@ Stage contract
 
 * **DETECT** -- normalize an arbitrary inbound event (HTTP / SSE / CLI
   dict) into a :class:`SOAREvent` dataclass with stable field shapes.
-* **JUDGE**  -- evaluate via the Deterministic Judge Layer (DJL) and
-  package the result in a :class:`JudgeResult`. The LLM ensemble branch
-  is a stub here; US-77 will extend ``judge()`` to add the parallel
-  ``asyncio.gather`` over the multi-vendor judge ensemble and the
-  ``verdict_combine`` merge step. The contract surface
-  (``JudgeResult(djl_verdict, llm_verdict, combined)``) is forward
-  compatible with that change.
+* **JUDGE**  -- evaluate both layers (Deterministic Judge Layer + LLM
+  ensemble) in parallel via :func:`verdict_combine.combine` and package
+  the dual-layer result in a :class:`JudgeResult`. The canonical
+  :class:`djl.DjlEngine` (62 rules, US-72) is the deterministic layer;
+  an optional ``judge_llm_fn`` constructor hook supplies the LLM
+  ensemble layer. When the LLM hook is absent the pipeline still runs
+  -- it just degrades to djl-only with the combined decision reducing
+  to the DJL decision.
 * **ENFORCE** -- map combined verdict to a discrete action label
   (ALLOW / REVIEW / BLOCK / QUARANTINE / ESCALATE) with audit fields.
 * **FORENSICS** -- append the SOARVerdict to an HMAC-SHA256 chained
@@ -44,6 +45,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
+
+from .djl import DjlEngine
+from .verdict_combine import CombinedVerdict, LlmEnsembleVerdict, combine
 
 logger = logging.getLogger("apohara_aegis.soar_pipeline")
 
@@ -105,16 +109,37 @@ class DJLVerdict:
 
 @dataclass
 class JudgeResult:
-    """Combined output of the JUDGE stage.
+    """Output of the JUDGE stage.
 
-    ``llm_verdict`` is ``None`` while US-77 is open. ``combined`` reflects
-    the current dual-layer merge -- when the LLM branch lands, the
-    merge will incorporate both verdicts via ``verdict_combine.combine``.
+    US-77 (2026-05-18) wires the canonical dual-layer
+    :func:`verdict_combine.combine` -- both per-layer verdicts are now
+    available on :attr:`combined_verdict` for audit-chain forensics and
+    the legacy :attr:`djl_verdict` / :attr:`llm_verdict` fields are
+    projected from it for backward compatibility:
+
+    * ``djl_verdict``     -- legacy-shape projection of the canonical
+                             :class:`djl.DjlVerdict` produced by the
+                             combine call (see ``_canonical_djl_to_legacy``).
+    * ``llm_verdict``     -- ``None`` in djl-only mode; otherwise a
+                             dict snapshot of the LLM ensemble verdict
+                             for HMAC-chain serialisation.
+    * ``combined``        -- safe-merged legacy :class:`DJLVerdict`
+                             reflecting the dual-layer decision.
+                             Identical to :attr:`djl_verdict` in
+                             djl-only mode; differs when the LLM peer
+                             vetoes / demotes.
+    * ``combined_verdict`` -- canonical :class:`CombinedVerdict`
+                              (US-77) carrying both per-layer verdicts
+                              with their full provenance (vendor_votes,
+                              matched_rules, per-layer latency).
+                              Read this in new code; the three legacy
+                              fields are kept for pre-US-77 callers.
     """
 
     djl_verdict: DJLVerdict
-    llm_verdict: Optional[dict[str, Any]] = None     # US-77 will type this
-    combined: Optional[DJLVerdict] = None            # = djl_verdict for now
+    llm_verdict: Optional[dict[str, Any]] = None
+    combined: Optional[DJLVerdict] = None
+    combined_verdict: Optional[CombinedVerdict] = None
 
 
 @dataclass
@@ -278,14 +303,19 @@ class _HMACChain:
 
 
 # ---------------------------------------------------------------------------
-# Default DJL rule pack (inline)
+# DEPRECATED inline DJL rule pack
 # ---------------------------------------------------------------------------
 #
-# Until ``djl.py`` (US-72) lands, ``SOARPipeline.judge`` consults this
-# small supplementary pack PLUS the existing OWASP regex pack. The pack
-# is intentionally narrow -- it covers the test scenarios in
-# ``tests/test_soar_pipeline.py`` (SQLi / tool-misuse / PII) and gives
-# US-72 a concrete shape to replace.
+# DEPRECATED (US-77, 2026-05-18): the canonical Zero-LLM Deterministic
+# Judge now lives in :mod:`apohara_aegis.djl` (62 rules, US-72) and is
+# invoked via :func:`verdict_combine.combine` (US-77) inside
+# :meth:`SOARPipeline.judge`. This 4-rule inline pack is preserved
+# (a) so this module remains self-contained for unit tests that need a
+# zero-dependency rule set, and (b) so historic pre-US-77 behaviour can
+# be reproduced via :func:`_deprecated_inline_djl` for regression
+# analysis. New code MUST NOT call :func:`_deprecated_inline_djl`;
+# call :class:`djl.DjlEngine.evaluate` (or the module-level
+# :func:`djl.evaluate` singleton) instead.
 
 import re
 
@@ -356,8 +386,14 @@ _DJL_RULES: tuple[tuple["re.Pattern[str]", str, str, str, float], ...] = (
 )
 
 
-def _djl_evaluate(prompt: str, context: dict[str, Any]) -> DJLVerdict:
-    """Synchronous deterministic-judge evaluation (inline shim for US-72).
+def _deprecated_inline_djl(prompt: str, context: dict[str, Any]) -> DJLVerdict:
+    """DEPRECATED -- pre-US-77 inline DJL evaluation.
+
+    .. deprecated:: US-77 (2026-05-18)
+        Use :class:`apohara_aegis.djl.DjlEngine` via
+        :func:`apohara_aegis.verdict_combine.combine` instead. This
+        function is kept only for module self-containment and
+        pre-US-77 behavioural regression studies.
 
     Order of evaluation:
         1. OWASP regex pack (catches prompt-injection family).
@@ -365,9 +401,7 @@ def _djl_evaluate(prompt: str, context: dict[str, Any]) -> DJLVerdict:
            PII, financial transfer).
 
     Falls through to ``ALLOW`` when no rule fires. ``context`` is
-    accepted for forward compatibility with US-72 (which will use it
-    to read agent role / tool name / org policy band); the shim does
-    not consult it today.
+    accepted for forward compatibility; the shim does not consult it.
     """
     del context  # forward-compat parameter; unused in the inline shim
     t0 = time.perf_counter()
@@ -417,19 +451,154 @@ def _djl_evaluate(prompt: str, context: dict[str, Any]) -> DJLVerdict:
 
 
 # ---------------------------------------------------------------------------
+# Canonical -> legacy adapter
+# ---------------------------------------------------------------------------
+#
+# US-77 swaps the inline 4-rule DJL for the canonical 62-rule
+# :class:`djl.DjlEngine`. The legacy :class:`DJLVerdict` shape is kept
+# on :class:`JudgeResult` so :meth:`SOARPipeline.enforce` continues to
+# read ``rule``, ``reason``, ``confidence`` -- the adapter below
+# projects a canonical :class:`djl.DjlVerdict` (decision +
+# matched_rules + latency_ms) onto the legacy shape using a stable
+# rule-id prefix mapping.
+
+# Canonical DJL rule-id prefix -> legacy rule name.
+# Prefixes are evaluated left-to-right against the first matched rule;
+# the longest match wins so MIS-001/MIS-002 can route to
+# "destructive_shell" before the catch-all "MIS-".
+_LEGACY_RULE_MAP: tuple[tuple[str, str], ...] = (
+    ("DJL-MIS-001", "destructive_shell"),
+    ("DJL-MIS-002", "destructive_shell"),
+    ("DJL-MIS-007", "destructive_shell"),  # fork bomb
+    ("DJL-MIS-008", "destructive_shell"),  # reverse shell
+    ("DJL-MIS-003", "unauthorized_financial_transfer"),
+    ("DJL-MIS-",    "tool_misuse"),
+    ("DJL-SQLI-",   "sql_injection"),
+    ("DJL-XSS-",    "xss"),
+    ("DJL-PII-",    "pii_leak_attempt"),
+    ("DJL-EXF-",    "exfiltration"),
+    ("DJL-POL-",    "policy_violation"),
+)
+
+
+def _canonical_djl_to_legacy(
+    canonical: "DjlVerdict_T",  # forward ref; real type is djl.DjlVerdict
+    *,
+    prompt: str = "",
+) -> DJLVerdict:
+    """Project a canonical :class:`djl.DjlVerdict` onto the legacy shape.
+
+    * ``rule``       -- prefix-mapped from the first ``matched_rules``
+                        entry, or ``"empty_input"`` for the empty
+                        prompt sentinel, or ``""`` when nothing
+                        matched, or ``owasp:<id>`` for any
+                        ``DJL-PI-*`` match (preserves the pre-US-77
+                        ``owasp:`` audit breadcrumb).
+    * ``reason``     -- ``"<rule_id> matched"`` or ``"no rule fired"``.
+    * ``confidence`` -- 1.0 for deterministic matches (regex is
+                        boolean), 0.85 for the soft-block branches
+                        (PII / financial transfer) which the pre-US-77
+                        policy routes to REVIEW rather than BLOCK
+                        (a PII *mention* or financial-transfer
+                        *instruction* is not the same as an
+                        exfiltration directive; the LLM ensemble is
+                        the right peer to escalate true intent).
+    """
+    matched = canonical.matched_rules
+
+    # Empty-input sentinel (pre-US-77 backward compatibility)
+    if not prompt and not matched:
+        return DJLVerdict(
+            decision=canonical.decision,
+            rule="empty_input",
+            reason="empty prompt -- no rule applicable",
+            confidence=1.0,
+            latency_ms=canonical.latency_ms,
+        )
+
+    if not matched:
+        return DJLVerdict(
+            decision=canonical.decision,
+            rule="",
+            reason="no rule fired",
+            confidence=1.0,
+            latency_ms=canonical.latency_ms,
+        )
+
+    first_id = matched[0]
+
+    # Prompt-injection family keeps the "owasp:" prefix breadcrumb
+    if first_id.startswith("DJL-PI-"):
+        legacy_rule = f"owasp:{first_id}"
+        return DJLVerdict(
+            decision=canonical.decision,
+            rule=legacy_rule,
+            reason=f"OWASP pattern matched: {first_id}",
+            confidence=1.0,
+            latency_ms=canonical.latency_ms,
+        )
+
+    # Walk longest-prefix-first
+    legacy_rule = ""
+    for prefix, name in _LEGACY_RULE_MAP:
+        if first_id.startswith(prefix):
+            legacy_rule = name
+            break
+    if not legacy_rule:
+        legacy_rule = first_id  # unknown family -- pass through raw id
+
+    # Soft-block: keep pre-US-77 REVIEW routing for PII + financial transfer
+    # matches. These are matches where the prompt MENTIONS sensitive
+    # categories but the intent (audit vs exfil; payroll vs theft) is
+    # genuinely ambiguous; the LLM ensemble peer is responsible for
+    # escalating to a hard BLOCK when adversarial intent is detected.
+    if legacy_rule in ("pii_leak_attempt", "unauthorized_financial_transfer"):
+        confidence = 0.85
+        decision = "REVIEW"
+    else:
+        confidence = 1.0
+        decision = canonical.decision
+
+    return DJLVerdict(
+        decision=decision,
+        rule=legacy_rule,
+        reason=f"{first_id} matched",
+        confidence=confidence,
+        latency_ms=canonical.latency_ms,
+    )
+
+
+# Forward-ref alias so the function annotation does not need to import
+# the canonical DjlVerdict eagerly (it does, but the alias keeps the
+# adapter signature readable).
+from .djl import DjlVerdict as DjlVerdict_T  # noqa: E402
+
+
+# ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
 
 
 # Type alias for the optional LLM ensemble hook (US-77 plugs it in).
+#
+# Pre-US-77 contract:  ``LLMJudgeFn = Callable[[SOAREvent],
+#                                              Awaitable[dict[str, Any]]]``
+# US-77 forward path:  the canonical hook is
+#                      ``Callable[[str, dict | None],
+#                                 Awaitable[LlmEnsembleVerdict]]``
+#                      and is wired through ``verdict_combine.combine``.
+# Both shapes are supported on the constructor for backward
+# compatibility; the new shape (``LlmEnsembleFn``) is preferred.
 LLMJudgeFn = Callable[[SOAREvent], Awaitable[dict[str, Any]]]
+LlmEnsembleFn = Callable[[str, Optional[dict]], Awaitable[LlmEnsembleVerdict]]
 
 
 class SOARPipeline:
     """4-stage incident response pipeline: DETECT -> JUDGE -> ENFORCE -> FORENSICS.
 
-    Constructor parameters are kept narrow on purpose; US-77 will extend
-    the ``judge_llm_fn`` hook to wire in the multi-vendor ensemble.
+    Constructor parameters are kept narrow on purpose; US-77 wires the
+    canonical 62-rule :class:`djl.DjlEngine` + the 12-vendor LLM
+    ensemble through :func:`verdict_combine.combine`.
 
     Args:
         ledger_path: optional ``Path`` to persist the HMAC chain. ``None``
@@ -437,8 +606,20 @@ class SOARPipeline:
         hmac_key: optional 32-byte HMAC key; otherwise reads
             ``APOHARA_LEDGER_HMAC_KEY`` env var, finally falls back to
             an ephemeral key with a ``RuntimeWarning``.
-        judge_llm_fn: optional async callable; US-77 will pass the
-            ``EnsembleJudge.evaluate`` shim here. Left ``None`` today.
+        judge_llm_fn: pre-US-77 LLM judge hook -- ``Callable[[SOAREvent],
+            Awaitable[dict[str, Any]]]``. Preserved for backward
+            compatibility; when set, the returned dict is recorded on
+            :attr:`JudgeResult.llm_verdict` for forensics, but the
+            combined decision is djl-only (because the dict shape does
+            not carry per-vendor votes the safe-merge policy needs).
+        llm_ensemble_fn: US-77 canonical LLM ensemble hook --
+            ``Callable[[str, dict | None],
+            Awaitable[LlmEnsembleVerdict]]``. When supplied this is run
+            in parallel with DJL via :func:`verdict_combine.combine` and
+            the dual-layer safe-merge policy decides the combined
+            verdict.
+        djl_engine: optional pre-built :class:`djl.DjlEngine`; defaults
+            to a fresh engine with the canonical 62-rule corpus.
         prometheus_counter: optional callable invoked as
             ``prometheus_counter(action_label)`` after each pipeline run.
             Kept as an injected callable so the pipeline does not depend
@@ -450,10 +631,14 @@ class SOARPipeline:
         ledger_path: Optional[Path] = None,
         hmac_key: Optional[bytes] = None,
         judge_llm_fn: Optional[LLMJudgeFn] = None,
+        llm_ensemble_fn: Optional[LlmEnsembleFn] = None,
+        djl_engine: Optional[DjlEngine] = None,
         prometheus_counter: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._chain = _HMACChain(ledger_path=ledger_path, hmac_key=hmac_key)
         self._judge_llm_fn = judge_llm_fn
+        self._llm_ensemble_fn = llm_ensemble_fn
+        self._djl_engine = djl_engine if djl_engine is not None else DjlEngine()
         self._prometheus_counter = prometheus_counter
 
     # ------------------------------------------------------------------
@@ -530,30 +715,97 @@ class SOARPipeline:
         )
 
     async def judge(self, detected: SOAREvent) -> JudgeResult:
-        """Run DJL synchronously; STUB for the LLM-ensemble branch.
+        """Run DJL + LLM ensemble in parallel via :func:`verdict_combine.combine`.
 
-        US-77 will replace the body of this method with a parallel
-        ``asyncio.gather`` over the DJL call + the LLM ensemble call
-        followed by ``verdict_combine.combine``. The current
-        implementation calls :func:`_djl_evaluate` on the pipeline
-        thread and (optionally) the injected ``judge_llm_fn`` for
-        a single-vendor stub; ``llm_verdict`` is ``None`` when no
-        hook is wired.
+        US-77 (2026-05-18) replaces the pre-US-77 single-thread DJL
+        shim with the canonical dual-layer combine: the 62-rule
+        :class:`djl.DjlEngine` and (when configured) the 12-vendor
+        LLM ensemble fire in parallel and the safe-merge policy in
+        :func:`verdict_combine.combine` decides the combined verdict.
 
-        Forward compatibility: the ``JudgeResult.combined`` slot is
-        already typed as a :class:`DJLVerdict`; US-77 only needs to
-        update *that* field once it has both branches.
+        Backward compatibility (pre-US-77 ``judge_llm_fn`` shape):
+        when the constructor was given the old
+        ``Callable[[SOAREvent], Awaitable[dict]]`` hook instead of the
+        new ``LlmEnsembleFn``, the dict result is recorded on
+        :attr:`JudgeResult.llm_verdict` for forensics but does NOT
+        participate in the safe-merge (the dict shape lacks the
+        ``vendor_votes`` field). The combined decision in that path
+        reduces to djl-only.
+
+        Fail-open guarantee: if the LLM branch raises, the DJL branch
+        result is preserved -- a broken vendor MUST NOT undo a DJL
+        block.
         """
-        djl = _djl_evaluate(detected.prompt, detected.context)
-        llm_verdict: Optional[dict[str, Any]] = None
-        if self._judge_llm_fn is not None:
+        # Canonical dual-layer combine (US-77)
+        try:
+            combined_verdict = await combine(
+                prompt=detected.prompt,
+                context=detected.context,
+                djl_engine=self._djl_engine,
+                llm_ensemble_fn=self._llm_ensemble_fn,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Fail-open: if combine() itself blows up, fall back to a
+            # raw DJL call so we still return a verdict (and an audit
+            # record).
+            logger.warning("JUDGE: combine() raised (%s); falling back to djl-only", exc)
+            raw_djl = self._djl_engine.evaluate(detected.prompt, detected.context)
+            combined_verdict = CombinedVerdict(
+                djl_verdict=raw_djl,
+                llm_verdict=None,
+                decision=raw_djl.decision,
+                decision_reason=f"combine_fallback_{raw_djl.decision.lower()}",
+                total_latency_ms=raw_djl.latency_ms,
+            )
+
+        # Project canonical -> legacy DJLVerdict for enforce()/forensics()
+        legacy_djl = _canonical_djl_to_legacy(
+            combined_verdict.djl_verdict,
+            prompt=detected.prompt,
+        )
+
+        # Build the safe-merged legacy verdict reflecting the dual-layer
+        # decision. In djl-only mode combined.decision == djl.decision so
+        # this collapses to the same legacy_djl object.
+        if combined_verdict.llm_verdict is None:
+            combined_legacy = legacy_djl
+        else:
+            combined_legacy = DJLVerdict(
+                decision=combined_verdict.decision,
+                rule=legacy_djl.rule,
+                reason=combined_verdict.decision_reason,
+                confidence=legacy_djl.confidence,
+                latency_ms=combined_verdict.total_latency_ms,
+            )
+
+        # llm_verdict dict for HMAC-chain serialisation
+        llm_dict: Optional[dict[str, Any]] = None
+        if combined_verdict.llm_verdict is not None:
+            llm_dict = {
+                "decision": combined_verdict.llm_verdict.decision,
+                "vendor_votes": combined_verdict.llm_verdict.vendor_votes,
+                "block_count": combined_verdict.llm_verdict.block_count,
+                "review_count": combined_verdict.llm_verdict.review_count,
+                "allow_count": combined_verdict.llm_verdict.allow_count,
+                "latency_ms": combined_verdict.llm_verdict.latency_ms,
+                "layer": combined_verdict.llm_verdict.layer,
+            }
+
+        # Pre-US-77 ``judge_llm_fn`` (dict-returning) hook: still honoured
+        # for backward compatibility, but only as a forensics recorder.
+        if self._judge_llm_fn is not None and llm_dict is None:
             try:
-                llm_verdict = await self._judge_llm_fn(detected)
+                llm_dict = await self._judge_llm_fn(detected)
             except Exception as exc:  # noqa: BLE001
-                # Fail-open: a broken LLM branch must NOT undo a DJL block.
-                logger.warning("JUDGE: LLM branch raised (%s); ignoring", exc)
-                llm_verdict = {"error": str(exc)[:160]}
-        return JudgeResult(djl_verdict=djl, llm_verdict=llm_verdict, combined=djl)
+                logger.warning("JUDGE: legacy judge_llm_fn raised (%s); ignoring", exc)
+                llm_dict = {"error": str(exc)[:160]}
+
+        return JudgeResult(
+            djl_verdict=legacy_djl,
+            llm_verdict=llm_dict,
+            combined=combined_legacy,
+            combined_verdict=combined_verdict,
+        )
 
     async def enforce(self, judged: JudgeResult) -> EnforcedAction:
         """Map combined verdict to one of :data:`VALID_ACTIONS`.
