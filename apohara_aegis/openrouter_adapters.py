@@ -457,6 +457,213 @@ class OpenRouterGPT55Adapter(OpenRouterAdapter):
 
 
 # ---------------------------------------------------------------------------
+# Day-6 sibling adapters — 5 additional frontier variants (2026-05-17)
+# ---------------------------------------------------------------------------
+#
+# Sibling-tier additions to the existing 5-frontier set. These are
+# distinct OpenRouter model_ids verified live against
+# ``GET https://openrouter.ai/api/v1/models`` on 2026-05-17. They give
+# the ensemble reasoning/thinking-tier perspectives that complement the
+# 5 base frontier judges already defined above (which favor low-latency
+# non-thinking variants). Pricing snapshots are from the same catalogue
+# call; OpenRouter publishes rates per-token (decimal USD), reproduced
+# here at the per-token granularity used by the rest of the module.
+
+
+class OpenRouterDeepSeekV32SpecialeAdapter(OpenRouterAdapter):
+    """DeepSeek V3.2 Speciale via OpenRouter — long-context reasoning tier.
+
+    Per-token rate (live catalogue 2026-05-17): $0.287/M input,
+    $0.431/M output. 163,840-token context window. Complements
+    :class:`OpenRouterDeepSeekV4ProAdapter` by giving the ensemble a
+    second DeepSeek lineage entry at a distinct cost / context profile.
+    """
+
+    model_id: str = "deepseek/deepseek-v3.2-speciale"
+    name: str = "openrouter_deepseek_v3_2_speciale"
+    vendor: str = "openrouter"
+    cost_per_input_tok: float = 0.287 / 1_000_000
+    cost_per_output_tok: float = 0.431 / 1_000_000
+
+
+class OpenRouterKimiK2ThinkingAdapter(OpenRouterAdapter):
+    """Moonshot AI Kimi K2 Thinking via OpenRouter — reasoning variant.
+
+    Per-token rate (live catalogue 2026-05-17): $0.60/M input,
+    $2.50/M output. 262,144-token context window. Emits
+    ``<think>...</think>`` chain-of-thought blocks which the base
+    :meth:`OpenRouterAdapter._parse_response` strips before JSON parse.
+    """
+
+    model_id: str = "moonshotai/kimi-k2-thinking"
+    name: str = "openrouter_kimi_k2_thinking"
+    vendor: str = "openrouter"
+    cost_per_input_tok: float = 0.60 / 1_000_000
+    cost_per_output_tok: float = 2.50 / 1_000_000
+
+
+class OpenRouterQwen36MaxPreviewAdapter(OpenRouterAdapter):
+    """Alibaba Qwen 3.6 Max Preview via OpenRouter — top-tier Qwen reasoning.
+
+    Per-token rate (live catalogue 2026-05-17): $1.04/M input,
+    $6.24/M output. 262,144-token context window. Higher-capability
+    sibling of :class:`OpenRouterQwen36PlusAdapter` for marginal-
+    confidence ensemble vote bands.
+    """
+
+    model_id: str = "qwen/qwen3.6-max-preview"
+    name: str = "openrouter_qwen3_6_max_preview"
+    vendor: str = "openrouter"
+    cost_per_input_tok: float = 1.04 / 1_000_000
+    cost_per_output_tok: float = 6.24 / 1_000_000
+
+
+class OpenRouterQwen3MaxThinkingAdapter(OpenRouterAdapter):
+    """Alibaba Qwen 3 Max Thinking via OpenRouter — reasoning-tier Qwen.
+
+    Per-token rate (live catalogue 2026-05-17): $0.78/M input,
+    $3.90/M output. 262,144-token context window. Thinking-style model
+    (CoT emission); base parser strips the ``<think>`` block before
+    JSON parse.
+    """
+
+    model_id: str = "qwen/qwen3-max-thinking"
+    name: str = "openrouter_qwen3_max_thinking"
+    vendor: str = "openrouter"
+    cost_per_input_tok: float = 0.78 / 1_000_000
+    cost_per_output_tok: float = 3.90 / 1_000_000
+
+
+class OpenRouterLlamaNemotronSuper49BV15Adapter(OpenRouterAdapter):
+    """NVIDIA Llama 3.3 Nemotron Super 49B v1.5 via OpenRouter.
+
+    Per-token rate (live catalogue 2026-05-17): $0.10/M input,
+    $0.40/M output. 131,072-token context window. Cheap NVIDIA-lineage
+    sibling to :class:`OpenRouterNemotron3Super120BAdapter` for cost-
+    sensitive ensemble compositions.
+    """
+
+    model_id: str = "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+    name: str = "openrouter_llama_nemotron_super_49b_v1_5"
+    vendor: str = "openrouter"
+    cost_per_input_tok: float = 0.10 / 1_000_000
+    cost_per_output_tok: float = 0.40 / 1_000_000
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 priority A — 12-vendor expansion (2026-05-18)
+# ---------------------------------------------------------------------------
+#
+# Three new adapters wire the ensemble's coverage from 10 → 13 entries
+# in :func:`make_default_adapters` (12 frontier seats + Big Pickle stealth
+# entry; the design doc rounds the headline to "12 vendors" because Big
+# Pickle is a stealth-tier alias). Sources:
+#
+#   * Design doc: ``apohara-inti/docs/research/12-vendor-ensemble-design.md``
+#   * Issue: ``github.com/SuarezPM/apohara-aegis#1``
+#
+# Per-token pricing baseline: live ``GET https://openrouter.ai/api/v1/models``
+# catalogue probe on 2026-05-18. Two model_ids in this batch are NOT yet
+# in the OpenRouter catalogue at probe time:
+#
+#   * ``x-ai/grok-2-1212`` — current x-ai roster only exposes
+#     grok-4.x variants (4.3, 4.20, 4.20-multi-agent). Adapter ships
+#     with the 1212 model_id as instructed; live calls will return
+#     ``path='unavailable'`` via the base class fail-open contract
+#     until OpenRouter re-publishes the route (or we switch to a
+#     surviving x-ai variant in a follow-up commit).
+#   * ``perplexity/llama-3.1-sonar-large-128k-online`` — Perplexity
+#     consolidated their roster around plain ``perplexity/sonar``,
+#     ``perplexity/sonar-pro``, ``perplexity/sonar-deep-research``,
+#     etc. The llama-3.1-sonar-large alias is no longer routed; same
+#     fail-open behaviour applies.
+#
+# Mistral Large 2411 IS live on the catalogue (~$2/M input, $6/M
+# output, 131072 ctx). Per-token rates below are seeded from the
+# catalogue for Mistral and from the design-doc estimated ~$0.005-
+# $0.008/call envelope for Grok 2 + Perplexity Sonar. When those two
+# routes come back online a single-commit cost refresh updates the
+# constants.
+
+
+class OpenRouterMistralLarge2411Adapter(OpenRouterAdapter):
+    """Mistral Large 2411 via OpenRouter — EU AI Act compliance angle.
+
+    European AI company subject to EU AI Act constraints. Mistral's RLHF
+    and safety tuning differ substantially from US-trained models,
+    providing a distinct training distribution that catches bias
+    patterns invisible to GPT/Claude. Adds regulatory diversity to the
+    ensemble (Vendor 10 per the 12-vendor design doc).
+
+    Per-token rate (live catalogue 2026-05-18): $2.00/M input,
+    $6.00/M output. 131,072-token context window.
+    """
+
+    model_id: str = "mistralai/mistral-large-2411"
+    name: str = "openrouter_mistral_large_2411"
+    vendor: str = "openrouter"
+    cost_per_input_tok: float = 2.00 / 1_000_000
+    cost_per_output_tok: float = 6.00 / 1_000_000
+
+
+class OpenRouterGrok2Adapter(OpenRouterAdapter):
+    """xAI Grok-2 (1212) via OpenRouter — distinct training distribution.
+
+    xAI's flagship 1212-vintage model trained on a different data
+    distribution (heavy social/real-time corpus). Its anomalous
+    reasoning patterns surface adversarial prompt vectors that
+    academic-corpus models miss. Adding a non-OpenAI, non-Anthropic,
+    non-Google frontier model strengthens ensemble coverage (Vendor 11
+    per the 12-vendor design doc).
+
+    KNOWN-LIMITATION (2026-05-18): the ``x-ai/grok-2-1212`` model_id is
+    NOT currently in the OpenRouter ``GET /api/v1/models`` catalogue —
+    the live x-ai roster only exposes grok-4.x variants (4.3, 4.20,
+    4.20-multi-agent). This adapter ships with the model_id specified
+    in the design doc; live calls will return
+    ``path='unavailable'`` via the base class fail-open contract until
+    OpenRouter re-publishes the 1212 route. Per-token rates below are
+    estimated from the design-doc ~$0.005/call envelope.
+    """
+
+    model_id: str = "x-ai/grok-2-1212"
+    name: str = "openrouter_grok_2_1212"
+    vendor: str = "openrouter"
+    cost_per_input_tok: float = 2.00 / 1_000_000
+    cost_per_output_tok: float = 10.00 / 1_000_000
+
+
+class OpenRouterPerplexitySonarLargeAdapter(OpenRouterAdapter):
+    """Perplexity Sonar Large 128k Online via OpenRouter — web-grounded.
+
+    Web-grounded variant — performs live retrieval before generating its
+    verdict. Uniquely positions it to catch CVE references in submitted
+    code snippets, deprecated API patterns with known exploits, and
+    supply-chain vulnerabilities linked to current advisories. No other
+    vendor in the ensemble is web-grounded (Vendor 12 per the 12-vendor
+    design doc).
+
+    KNOWN-LIMITATION (2026-05-18): the
+    ``perplexity/llama-3.1-sonar-large-128k-online`` model_id is NOT
+    currently in the OpenRouter ``GET /api/v1/models`` catalogue —
+    Perplexity consolidated their roster around plain
+    ``perplexity/sonar``, ``perplexity/sonar-pro``,
+    ``perplexity/sonar-deep-research``, etc. This adapter ships with
+    the model_id specified in the design doc; live calls will return
+    ``path='unavailable'`` via the base class fail-open contract until
+    OpenRouter re-publishes the legacy alias. Per-token rates below are
+    estimated from the design-doc ~$0.008/call retrieval-premium
+    envelope.
+    """
+
+    model_id: str = "perplexity/llama-3.1-sonar-large-128k-online"
+    name: str = "openrouter_perplexity_sonar_large"
+    vendor: str = "openrouter"
+    cost_per_input_tok: float = 1.00 / 1_000_000
+    cost_per_output_tok: float = 1.00 / 1_000_000
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -473,4 +680,12 @@ __all__ = [
     "OpenRouterGeminiAdapter",
     "OpenRouterClaudeOpus47FastAdapter",
     "OpenRouterGPT55Adapter",
+    "OpenRouterDeepSeekV32SpecialeAdapter",
+    "OpenRouterKimiK2ThinkingAdapter",
+    "OpenRouterQwen36MaxPreviewAdapter",
+    "OpenRouterQwen3MaxThinkingAdapter",
+    "OpenRouterLlamaNemotronSuper49BV15Adapter",
+    "OpenRouterMistralLarge2411Adapter",
+    "OpenRouterGrok2Adapter",
+    "OpenRouterPerplexitySonarLargeAdapter",
 ]

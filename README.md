@@ -175,6 +175,32 @@ Day-4 entry #17 measurements remain valid for the 87.50% / 70-block claim under 
 
 ---
 
+## Phase 3 priority A — 12-vendor ensemble expansion (2026-05-18)
+
+The frontier ensemble grew from **10 → 13 seats** (12 frontier + 1 Big Pickle stealth alias — headline rounds to "12 vendors") per the design doc at `apohara-inti/docs/research/12-vendor-ensemble-design.md` and tracking issue [github.com/SuarezPM/apohara-aegis#1](https://github.com/SuarezPM/apohara-aegis/issues/1). Three new `FallbackVendorAdapter` seats wired into `make_default_adapters()`:
+
+| Seat | Route | Rationale |
+|------|-------|-----------|
+| `mistral-large-seat` | OR `mistralai/mistral-large-2411` | European AI company under EU AI Act constraints — distinct RLHF + safety tuning vs US-trained models |
+| `grok-2-seat` | OR `x-ai/grok-2-1212` | xAI's flagship; non-OpenAI / non-Anthropic / non-Google frontier lineage; social-corpus training distribution surfaces adversarial vectors academic-corpus models miss |
+| `perplexity-sonar-seat` | OR `perplexity/llama-3.1-sonar-large-128k-online` | Only web-grounded vendor in the ensemble — catches CVE references in submitted code, deprecated API patterns with known exploits, supply-chain advisories |
+
+**Per-token rates** (Mistral live from OpenRouter catalogue 2026-05-18, Grok / Perplexity estimated per the design doc envelope until OpenRouter re-publishes those routes):
+
+| Adapter | $/M input | $/M output | Catalogue status 2026-05-18 |
+|---------|-----------|-----------|-----------------------------|
+| `OpenRouterMistralLarge2411Adapter` | 2.00 | 6.00 | live |
+| `OpenRouterGrok2Adapter` | 2.00 | 10.00 | **not in catalogue** (x-ai roster only exposes grok-4.x variants — adapter ships per the design doc; live calls return `path='unavailable'` via the base-class fail-open contract until the route returns) |
+| `OpenRouterPerplexitySonarLargeAdapter` | 1.00 | 1.00 | **not in catalogue** (Perplexity consolidated to `perplexity/sonar`, `perplexity/sonar-pro`, etc — adapter ships per the design doc; same fail-open behaviour as Grok-2 above) |
+
+**Vote thresholds** rescaled automatically: the `_scale_thresholds_for_adapter_count` helper produced `{high: 13, med: 9, human_review: 4}` for N=13 (vs the Day-4 N=10 canonical `{high: 10, med: 6, human_review: 3}`). The `DEFAULT_VOTE_THRESHOLDS` constant stays pinned at the N=10 ladder for back-compat with downstream consumers that import it directly.
+
+**Consumer-side rescaling recommendation** (not enforced here): apohara-probant's `VERDICT_REVIEW_THRESHOLD` / `VERDICT_BLOCK_THRESHOLD` defaults of `3` / `6` were calibrated for the 9-vendor pre-expansion ensemble. Proportional values for 12 frontier vendors are `risky >= 4` / `blocked >= 8` per §"Threshold rescaling" of the design doc. Update apohara-probant `main.py` separately when ready (consumer-side change).
+
+**Cost impact**: ~30% per call within the existing $0.50 per-call ceiling (rough estimate; consumer dashboards will surface real figures once Grok-2 / Sonar-Large routes come online).
+
+---
+
 ### Day-4 10-frontier ensemble bake-off (2026-05-15, AUDIT [§17](AUDIT.md))
 
 > **Superseded by Day-5 FallbackVendorAdapter measurements (2026-05-15) — see section above.**

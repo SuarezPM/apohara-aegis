@@ -7,8 +7,11 @@ Covers (6 tests):
   4. Vote 0/5 harmful -> NOT blocked, HIGH consensus benign.
   5. Cost cap: an adapter at or above its cap returns path='out_of_budget',
      EnsembleJudge votes with N-1 sources, dissent_summary surfaces the gap.
-  6. Day-4 default ensemble is the 10-vendor frontier composition with
-     ``{high: 10, med: 6, human_review: 3}`` thresholds (US-001 contract).
+  6. Default ensemble is the 13-seat frontier composition (12 frontier
+     + Big Pickle stealth alias; "12 vendors" headline) with
+     ``{high: 13, med: 9, human_review: 4}`` thresholds rescaled from
+     the Day-4 N=10 ``{high: 10, med: 6, human_review: 3}`` ladder.
+     Phase-3 priority A expansion 2026-05-18 (US-001 contract).
 
 These tests build the ensemble from STUB adapters so they run offline +
 deterministically (tests 1-5). Mock adapters expose ``cumulative_cost_usd``
@@ -207,18 +210,23 @@ def test_ensemble_cost_cap_excludes_overbudget_vendor() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. Day-4 10-frontier ensemble factory contract (US-001)
+# 6. Default frontier ensemble factory contract — Phase-3 expansion (US-001)
 # ---------------------------------------------------------------------------
 
 
-def test_default_ensemble_is_10_vendor_frontier() -> None:
-    """`make_default_ensemble` returns the canonical 10-seat frontier ensemble.
+def test_default_ensemble_is_13_seat_frontier() -> None:
+    """`make_default_ensemble` returns the canonical 13-seat frontier ensemble.
 
-    Construction-only smoke — no network calls. Asserts (Day-5, US-003):
+    Construction-only smoke — no network calls. Asserts (Day-5 US-003 +
+    Phase-3 priority A 2026-05-18):
 
-    * Exactly 10 adapters, each wrapped in :class:`FallbackVendorAdapter`
+    * Exactly 13 adapters, each wrapped in :class:`FallbackVendorAdapter`
       so the seat survives a primary-route degradation by transparently
-      routing through ordered backups.
+      routing through ordered backups. (Day-4 had 10 seats; Phase-3
+      priority A added Mistral Large 2411, Grok-2 1212, and Perplexity
+      Sonar Large 128k Online before the Big Pickle stealth tail.
+      Headline rounds to "12 vendors" because Big Pickle is a stealth-
+      tier alias.)
     * Seat-level (vendor_label, model_label) order matches the Day-5
       seat map documented in README §Day-5 and AUDIT entry #18.
     * Each seat's PRIMARY route is the adapter class documented in the
@@ -248,15 +256,23 @@ def test_default_ensemble_is_10_vendor_frontier() -> None:
     )
     from apohara_aegis.openrouter_adapters import (  # noqa: PLC0415
         OpenRouterDeepSeekV4ProAdapter,
+        OpenRouterGrok2Adapter,
+        OpenRouterMistralLarge2411Adapter,
         OpenRouterNemotron3Super120BAdapter,
+        OpenRouterPerplexitySonarLargeAdapter,
         OpenRouterQwen36PlusAdapter,
     )
 
     e = make_default_ensemble()
 
-    # 10 seats, all FallbackVendorAdapter wrappers.
-    assert len(e.adapters) == 10, (
-        f"expected exactly 10 frontier seats, got {len(e.adapters)}"
+    # 13 seats, all FallbackVendorAdapter wrappers. Phase-3 priority A
+    # (2026-05-18) added 3 frontier seats (Mistral Large 2411, Grok-2
+    # 1212, Perplexity Sonar Large 128k Online) to the prior 10-seat
+    # composition. The headline rounds to "12 vendors" because Big
+    # Pickle is a stealth-tier alias.
+    assert len(e.adapters) == 13, (
+        f"expected exactly 13 frontier seats post Phase-3 expansion, "
+        f"got {len(e.adapters)}"
     )
     for got in e.adapters:
         assert isinstance(got, FallbackVendorAdapter), (
@@ -265,7 +281,7 @@ def test_default_ensemble_is_10_vendor_frontier() -> None:
         )
 
     # Seat-level (vendor_label, model_label) order — matches the Day-5
-    # seat map in AUDIT entry #18.
+    # seat map in AUDIT entry #18 + Phase-3 priority A 2026-05-18 tail.
     expected_seat_labels = [
         ("gemini-seat", "gemini-3.1-pro-preview"),
         ("claude-opus-47-seat", "claude-opus-4-7"),
@@ -276,6 +292,12 @@ def test_default_ensemble_is_10_vendor_frontier() -> None:
         ("glm-51-seat", "glm-5.1"),
         ("qwen36-plus-seat", "qwen3.6-plus"),
         ("nemotron-3-super-seat", "nvidia/nemotron-3-super-120b-a12b"),
+        ("mistral-large-seat", "mistralai/mistral-large-2411"),
+        ("grok-2-seat", "x-ai/grok-2-1212"),
+        (
+            "perplexity-sonar-seat",
+            "perplexity/llama-3.1-sonar-large-128k-online",
+        ),
         ("big-pickle-seat", "big-pickle"),
     ]
     got_seat_labels = [(a.vendor, a.model) for a in e.adapters]
@@ -286,7 +308,8 @@ def test_default_ensemble_is_10_vendor_frontier() -> None:
 
     # Each seat's PRIMARY route — the adapter class documented in the
     # Day-5 seat map. The promoted seats (Kimi K2.6, GLM 5.1) have
-    # opencode Zen primaries; the standard seats keep their Day-4 route.
+    # opencode Zen primaries; the standard seats keep their Day-4
+    # route. Phase-3 priority A appended 3 OpenRouter-primary seats.
     expected_primary_types = [
         GeminiAIStudioAdapter,
         ClaudeOpus47Adapter,
@@ -297,6 +320,9 @@ def test_default_ensemble_is_10_vendor_frontier() -> None:
         OpencodeZenGLM51Adapter,      # PROMOTED to primary (Day-5)
         OpenRouterQwen36PlusAdapter,
         OpenRouterNemotron3Super120BAdapter,
+        OpenRouterMistralLarge2411Adapter,        # Phase-3 priority A
+        OpenRouterGrok2Adapter,                   # Phase-3 priority A
+        OpenRouterPerplexitySonarLargeAdapter,    # Phase-3 priority A
         OpencodeZenBigPickleAdapter,
     ]
     for seat, want in zip(e.adapters, expected_primary_types):
@@ -306,9 +332,14 @@ def test_default_ensemble_is_10_vendor_frontier() -> None:
             f"got {type(primary).__name__}, expected {want.__name__}"
         )
 
-    # Vote thresholds — the Day-4 ladder (fallback wrappers don't
-    # change the seat count or the ladder).
-    assert e.vote_thresholds == {"high": 10, "med": 6, "human_review": 3}
+    # Vote thresholds — Phase-3 priority A grew N from 10 → 13, so the
+    # ``_scale_thresholds_for_adapter_count`` helper proportionally
+    # raises the ladder to ``{high: 13, med: 9, human_review: 4}``
+    # (vs the Day-4 ``{high: 10, med: 6, human_review: 3}`` canonical
+    # N=10 default). ``DEFAULT_VOTE_THRESHOLDS`` itself stays pinned at
+    # the N=10 canonical Day-4 values for back-compat with existing
+    # consumers that import the constant directly.
+    assert e.vote_thresholds == {"high": 13, "med": 9, "human_review": 4}
     assert DEFAULT_VOTE_THRESHOLDS == {
         "high": 10, "med": 6, "human_review": 3,
     }
@@ -319,6 +350,6 @@ def test_default_ensemble_is_10_vendor_frontier() -> None:
     assert GroqLlamaPromptGuardAdapter not in seat_primary_types
 
     # The fast-path adapter slot is None because no
-    # GroqLlamaPromptGuardAdapter is in the 10-frontier ensemble — the
+    # GroqLlamaPromptGuardAdapter is in the frontier ensemble — the
     # full ensemble runs in parallel on every call by default.
     assert e._fast_path_adapter is None

@@ -1326,12 +1326,16 @@ class FallbackVendorAdapter(VendorAdapter):
 
 
 def make_default_adapters() -> list[VendorAdapter]:
-    """Construct the 10 default frontier-tier adapters (Day-4, 2026-05-15).
+    """Construct the 13 default frontier-tier adapters (2026-05-18).
 
     Order matters for tie-breaking in the dissent_summary output and
     matches the rationale columns in this module's docstring. Day 4
-    (2026-05-15) replaced the Day-2 6-vendor list with this 10-vendor
-    frontier ensemble (supersedes commit ``b3bcecc``):
+    (2026-05-15) replaced the Day-2 6-vendor list with the 10-vendor
+    frontier ensemble (supersedes commit ``b3bcecc``); 2026-05-18 added
+    three more frontier seats per the 12-vendor ensemble design doc
+    (``apohara-inti/docs/research/12-vendor-ensemble-design.md`` +
+    ``github.com/SuarezPM/apohara-aegis#1``) — the headline rounds to
+    "12 vendors" because Big Pickle is a stealth-tier alias:
 
     1. Gemini 3.1 Pro (Google AI Studio, paid)
     2. Claude Opus 4.7 (Anthropic via opencode Zen, paid)
@@ -1342,11 +1346,30 @@ def make_default_adapters() -> list[VendorAdapter]:
     7. GLM 5.1 (Z.ai via OpenRouter, paid)
     8. Qwen 3.6 Plus (Alibaba via OpenRouter, paid)
     9. Nemotron 3 Super 120B (NVIDIA via OpenRouter, paid)
-    10. Big Pickle (opencode Zen stealth tier — DeepSeek-V4-Flash
+    10. Mistral Large 2411 (Mistral via OpenRouter, paid) — Phase 3
+        priority A; EU AI Act regulatory diversity.
+    11. Grok-2 1212 (xAI via OpenRouter, paid) — Phase 3 priority A;
+        non-OpenAI / non-Anthropic / non-Google frontier lineage.
+        KNOWN-LIMITATION: model_id not in OpenRouter catalogue at
+        2026-05-18 — adapter ships per the design doc and fails open
+        until the route returns.
+    12. Perplexity Sonar Large 128k Online (Perplexity via OpenRouter,
+        paid) — Phase 3 priority A; only web-grounded vendor in the
+        ensemble (catches CVE / advisory references). KNOWN-LIMITATION:
+        same catalogue gap as Grok-2; fails open until route returns.
+    13. Big Pickle (opencode Zen stealth tier — DeepSeek-V4-Flash
         per live probe 2026-05-15, NOT GLM-4.6 per the community
         attribution; the alias IS the surface so we keep model_id
         ``big-pickle`` honestly and document the underlying real
         model in AUDIT entry #17.)
+
+    Consumer-side threshold rescaling (recommendation, not enforced
+    here): the proportional thresholds for 12 frontier vendors are
+    ``risky >= 4`` and ``blocked >= 8`` (vs ``risky >= 3`` /
+    ``blocked >= 6`` calibrated for the 9-vendor pre-expansion
+    ensemble). Apohara-probant's ``VERDICT_REVIEW_THRESHOLD`` /
+    ``VERDICT_BLOCK_THRESHOLD`` live in the consumer (apohara-probant
+    ``main.py``); update there in a separate change.
 
     KNOWN-LIMITATION: 3 opencode Zen stealth adapter classes
     (``OpencodeZenRing261TAdapter``, ``OpencodeZenTrinityLargeAdapter``,
@@ -1378,8 +1401,11 @@ def make_default_adapters() -> list[VendorAdapter]:
         OpenRouterGeminiAdapter,
         OpenRouterGLM51Adapter,
         OpenRouterGPT55Adapter,
+        OpenRouterGrok2Adapter,
         OpenRouterKimiK26Adapter,
+        OpenRouterMistralLarge2411Adapter,
         OpenRouterNemotron3Super120BAdapter,
+        OpenRouterPerplexitySonarLargeAdapter,
         OpenRouterQwen36PlusAdapter,
     )
     from apohara_aegis.opencode_zen_adapters import (  # noqa: PLC0415
@@ -1457,6 +1483,30 @@ def make_default_adapters() -> list[VendorAdapter]:
             vendor_label="nemotron-3-super-seat",
             model_label="nvidia/nemotron-3-super-120b-a12b",
         ),
+        # Phase 3 priority A (2026-05-18): three Mistral / xAI /
+        # Perplexity seats. Each has NO fallback because no clean
+        # cross-provider sibling exists yet (same wrapper pattern as
+        # Big Pickle below). When the Grok-2 / Sonar-Large routes
+        # come back online the live probe will flip them from
+        # path='unavailable' to path='primary' with zero code change.
+        FallbackVendorAdapter(
+            primary=OpenRouterMistralLarge2411Adapter(),
+            fallbacks=[],
+            vendor_label="mistral-large-seat",
+            model_label="mistralai/mistral-large-2411",
+        ),
+        FallbackVendorAdapter(
+            primary=OpenRouterGrok2Adapter(),
+            fallbacks=[],
+            vendor_label="grok-2-seat",
+            model_label="x-ai/grok-2-1212",
+        ),
+        FallbackVendorAdapter(
+            primary=OpenRouterPerplexitySonarLargeAdapter(),
+            fallbacks=[],
+            vendor_label="perplexity-sonar-seat",
+            model_label="perplexity/llama-3.1-sonar-large-128k-online",
+        ),
         FallbackVendorAdapter(
             primary=OpencodeZenBigPickleAdapter(),
             fallbacks=[],
@@ -1494,6 +1544,12 @@ DEFAULT_COST_CAPS_USD: dict[str, float] = {
     "openrouter_glm_5_1": 5.0,
     "openrouter_qwen3_6_plus": 5.0,
     "openrouter_nemotron_3_super_120b": 5.0,
+    # Phase 3 priority A (2026-05-18) — 3 new frontier seats, same
+    # $5 envelope per vendor consistent with the rest of the 9-paid
+    # set. Cumulative ensemble ceiling rises from $45 → $60.
+    "openrouter_mistral_large_2411": 5.0,
+    "openrouter_grok_2_1212": 5.0,
+    "openrouter_perplexity_sonar_large": 5.0,
     "opencode_zen:big-pickle": float("inf"),  # stealth promo, $0
     # The Day-2 Groq defense adapters are still importable for
     # standalone bake-off baselines. They are NOT in the default

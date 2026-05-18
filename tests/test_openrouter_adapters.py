@@ -40,13 +40,21 @@ import pytest
 from apohara_aegis.openrouter_adapters import (
     OpenRouterAdapter,
     OpenRouterClaudeOpus47FastAdapter,
+    OpenRouterDeepSeekV32SpecialeAdapter,
     OpenRouterDeepSeekV4ProAdapter,
     OpenRouterGeminiAdapter,
     OpenRouterGLM51Adapter,
     OpenRouterGPT55Adapter,
+    OpenRouterGrok2Adapter,
     OpenRouterKimiK26Adapter,
+    OpenRouterKimiK2ThinkingAdapter,
+    OpenRouterLlamaNemotronSuper49BV15Adapter,
+    OpenRouterMistralLarge2411Adapter,
     OpenRouterNemotron3Super120BAdapter,
+    OpenRouterPerplexitySonarLargeAdapter,
+    OpenRouterQwen36MaxPreviewAdapter,
     OpenRouterQwen36PlusAdapter,
+    OpenRouterQwen3MaxThinkingAdapter,
 )
 
 
@@ -474,6 +482,124 @@ def test_openrouter_gpt55_adapter_evaluate_block(
 
 
 # ---------------------------------------------------------------------------
+# Day-6 sibling adapters — instantiate + happy-path parse coverage (5 each)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "cls, expected_id, expected_name",
+    [
+        (
+            OpenRouterDeepSeekV32SpecialeAdapter,
+            "deepseek/deepseek-v3.2-speciale",
+            "openrouter_deepseek_v3_2_speciale",
+        ),
+        (
+            OpenRouterKimiK2ThinkingAdapter,
+            "moonshotai/kimi-k2-thinking",
+            "openrouter_kimi_k2_thinking",
+        ),
+        (
+            OpenRouterQwen36MaxPreviewAdapter,
+            "qwen/qwen3.6-max-preview",
+            "openrouter_qwen3_6_max_preview",
+        ),
+        (
+            OpenRouterQwen3MaxThinkingAdapter,
+            "qwen/qwen3-max-thinking",
+            "openrouter_qwen3_max_thinking",
+        ),
+        (
+            OpenRouterLlamaNemotronSuper49BV15Adapter,
+            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+            "openrouter_llama_nemotron_super_49b_v1_5",
+        ),
+    ],
+)
+def test_day6_sibling_adapter_smoke_instantiation(
+    monkeypatch: pytest.MonkeyPatch,
+    cls: type,
+    expected_id: str,
+    expected_name: str,
+) -> None:
+    """Each Day-6 sibling adapter MUST instantiate, expose the right
+    OpenRouter model_id / name, register as vendor=='openrouter', and
+    return True from ``_available()`` when the env var is set."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    adapter = cls()
+    assert adapter.model_id == expected_id
+    assert adapter.name == expected_name
+    assert adapter.vendor == "openrouter"
+    assert adapter._available() is True
+    # Per-token rates must be positive (each subclass sets them
+    # explicitly from the OpenRouter catalogue); a zero cost would
+    # silently break the cost-ledger contract.
+    assert adapter.cost_per_input_tok > 0.0
+    assert adapter.cost_per_output_tok > 0.0
+
+
+@pytest.mark.parametrize(
+    "cls, expected_id",
+    [
+        (
+            OpenRouterDeepSeekV32SpecialeAdapter,
+            "deepseek/deepseek-v3.2-speciale",
+        ),
+        (
+            OpenRouterKimiK2ThinkingAdapter,
+            "moonshotai/kimi-k2-thinking",
+        ),
+        (
+            OpenRouterQwen36MaxPreviewAdapter,
+            "qwen/qwen3.6-max-preview",
+        ),
+        (
+            OpenRouterQwen3MaxThinkingAdapter,
+            "qwen/qwen3-max-thinking",
+        ),
+        (
+            OpenRouterLlamaNemotronSuper49BV15Adapter,
+            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        ),
+    ],
+)
+def test_day6_sibling_adapter_parses_valid_json(
+    monkeypatch: pytest.MonkeyPatch,
+    cls: type,
+    expected_id: str,
+) -> None:
+    """Each Day-6 sibling adapter MUST parse a clean JSON content body
+    through the base ``_parse_response`` chain and stamp the right
+    model_id on the verdict — confirming the subclass inherits the
+    full request/parse chain unchanged."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    adapter = cls()
+
+    payload = {
+        "is_harmful": True,
+        "confidence": 0.91,
+        "category": "jailbreak_prompt_injection",
+        "reason": "Day-6 sibling parse smoke",
+    }
+    response = _fake_chat_completion(json.dumps(payload))
+    with patch(
+        "apohara_aegis.openrouter_adapters._sync_post_json",
+        return_value=(response, response["usage"]),
+    ):
+        v = _run(adapter.evaluate("any prompt"))
+
+    assert v.is_harmful is True
+    assert v.confidence == pytest.approx(0.91)
+    assert v.category == "jailbreak_prompt_injection"
+    assert v.vendor == "openrouter"
+    assert v.model == expected_id
+    assert v.path == "primary"
+    assert v.error is None
+    # Cost ledger advanced from response.usage.
+    assert adapter.cumulative_cost_usd > 0.0
+
+
+# ---------------------------------------------------------------------------
 # 11. (LIVE) Nemotron 3 Super end-to-end
 # ---------------------------------------------------------------------------
 
@@ -536,3 +662,146 @@ def test_live_deepseek_v4_pro_responds() -> None:
     assert v.vendor == "openrouter"
     assert v.model == "deepseek/deepseek-v4-pro"
     assert isinstance(v.is_harmful, bool)
+
+
+# ---------------------------------------------------------------------------
+# 13-15. Phase 3 priority A — Mistral / Grok / Perplexity Sonar
+# ---------------------------------------------------------------------------
+#
+# Three new adapters added per the 12-vendor design doc
+# (``apohara-inti/docs/research/12-vendor-ensemble-design.md`` and
+# ``github.com/SuarezPM/apohara-aegis#1``). Same Day-6-sibling pattern:
+# smoke-instantiation + parse-valid-json verifies each new subclass
+# inherits the full base request/parse chain unchanged. Plus a fourth
+# test asserts all three are wired into
+# :func:`make_default_adapters` and stamp the correct seat-level
+# ``vendor`` (FallbackVendorAdapter ``vendor_label``) and ``model``
+# (FallbackVendorAdapter ``model_label``).
+
+
+@pytest.mark.parametrize(
+    "cls, expected_id, expected_name",
+    [
+        (
+            OpenRouterMistralLarge2411Adapter,
+            "mistralai/mistral-large-2411",
+            "openrouter_mistral_large_2411",
+        ),
+        (
+            OpenRouterGrok2Adapter,
+            "x-ai/grok-2-1212",
+            "openrouter_grok_2_1212",
+        ),
+        (
+            OpenRouterPerplexitySonarLargeAdapter,
+            "perplexity/llama-3.1-sonar-large-128k-online",
+            "openrouter_perplexity_sonar_large",
+        ),
+    ],
+)
+def test_phase3_priority_a_adapter_smoke_instantiation(
+    monkeypatch: pytest.MonkeyPatch,
+    cls: type,
+    expected_id: str,
+    expected_name: str,
+) -> None:
+    """Each Phase-3-priority-A adapter MUST instantiate, expose the right
+    OpenRouter model_id / name, register as vendor=='openrouter', and
+    return True from ``_available()`` when the env var is set."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    adapter = cls()
+    assert adapter.model_id == expected_id
+    assert adapter.name == expected_name
+    assert adapter.vendor == "openrouter"
+    assert adapter._available() is True
+    # Per-token rates must be positive — zero costs would silently
+    # break the cost-ledger contract.
+    assert adapter.cost_per_input_tok > 0.0
+    assert adapter.cost_per_output_tok > 0.0
+
+
+@pytest.mark.parametrize(
+    "cls, expected_id",
+    [
+        (
+            OpenRouterMistralLarge2411Adapter,
+            "mistralai/mistral-large-2411",
+        ),
+        (
+            OpenRouterGrok2Adapter,
+            "x-ai/grok-2-1212",
+        ),
+        (
+            OpenRouterPerplexitySonarLargeAdapter,
+            "perplexity/llama-3.1-sonar-large-128k-online",
+        ),
+    ],
+)
+def test_phase3_priority_a_adapter_parses_valid_json(
+    monkeypatch: pytest.MonkeyPatch,
+    cls: type,
+    expected_id: str,
+) -> None:
+    """Each Phase-3-priority-A adapter MUST parse a clean JSON content
+    body through the base ``_parse_response`` chain and stamp the right
+    model_id on the verdict — confirms the subclass inherits the full
+    request/parse chain unchanged."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    adapter = cls()
+
+    payload = {
+        "is_harmful": True,
+        "confidence": 0.84,
+        "category": "jailbreak_prompt_injection",
+        "reason": "Phase-3 priority A parse smoke",
+    }
+    response = _fake_chat_completion(json.dumps(payload))
+    with patch(
+        "apohara_aegis.openrouter_adapters._sync_post_json",
+        return_value=(response, response["usage"]),
+    ):
+        v = _run(adapter.evaluate("any prompt"))
+
+    assert v.is_harmful is True
+    assert v.confidence == pytest.approx(0.84)
+    assert v.category == "jailbreak_prompt_injection"
+    assert v.vendor == "openrouter"
+    assert v.model == expected_id
+    assert v.path == "primary"
+    assert v.error is None
+    # Cost ledger advanced from response.usage.
+    assert adapter.cumulative_cost_usd > 0.0
+
+
+@pytest.mark.parametrize(
+    "seat_vendor_label, seat_model_label",
+    [
+        ("mistral-large-seat", "mistralai/mistral-large-2411"),
+        ("grok-2-seat", "x-ai/grok-2-1212"),
+        (
+            "perplexity-sonar-seat",
+            "perplexity/llama-3.1-sonar-large-128k-online",
+        ),
+    ],
+)
+def test_phase3_priority_a_seat_in_default_adapters(
+    seat_vendor_label: str,
+    seat_model_label: str,
+) -> None:
+    """Each Phase-3-priority-A seat MUST appear in
+    :func:`make_default_adapters` under the stable seat-level
+    vendor_label / model_label pair the dissent-summary expects. The
+    expansion grows the ensemble from 10 → 13 entries (12 frontier
+    seats + Big Pickle stealth alias)."""
+    from apohara_aegis.multi_judge import make_default_adapters
+    adapters = make_default_adapters()
+    # Headline rounds to "12 vendors" because Big Pickle is a stealth-
+    # tier alias; the list itself has 13 entries.
+    assert len(adapters) == 13, (
+        f"expected 13 seats after Phase-3 expansion, got {len(adapters)}"
+    )
+    seats = {(a.vendor, a.model) for a in adapters}
+    assert (seat_vendor_label, seat_model_label) in seats, (
+        f"seat ({seat_vendor_label}, {seat_model_label}) not found in "
+        f"make_default_adapters output; seats = {sorted(seats)}"
+    )
