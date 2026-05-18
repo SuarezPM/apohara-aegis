@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apohara-crewai"
+version = "0.1.0"
+description = "CrewAI tool decorator for Apohara PROBANT — intercepts agent tool calls via POST /v1/soar/judge/evaluate"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+    "crewai>=0.30",
+    "httpx>=0.27",
+]
+keywords = ["crewai", "apohara", "safety", "llm", "guard", "probant"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://github.com/SuarezPM/apohara-aegis"
+Repository = "https://github.com/SuarezPM/apohara-aegis"
+
+[tool.setuptools.packages.find]
+include = ["apohara_crewai*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

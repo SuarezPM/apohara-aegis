@@ -7,6 +7,14 @@ day-by-day measurements live in [`AUDIT.md`](AUDIT.md) and the
 
 ## [Unreleased]
 
+### Added — Fusion Sprint Tier-2: SDK middleware packages (2026-05-18, US-91)
+
+- **Two new SDK middleware packages** — `apohara-langchain` (LangChain callback) and `apohara-crewai` (tool decorator) — intercept agent prompts via POST `/v1/soar/judge/evaluate` and BLOCK on DJL/LLM ensemble veto. Both packages live under `integrations/`. `apohara-langchain` installs on Python 3.10–3.14; `apohara-crewai` requires Python 3.10–3.13 (crewai>=0.30 constraint). Fail-open by default; REVIEW escalation configurable via `block_on_review=True`.
+
+### Added — Fusion Sprint Tier-2: STIX 2.1 export (2026-05-18, US-90)
+
+- **STIX export endpoint** — `GET /v1/soar/incidents/{incident_id}/stix` returns a STIX 2.1 bundle (6 SDOs: identity, indicator, sighting, observed-data, course-of-action, note) for any incident in the HMAC verdict vault ledger; HMAC `signed_hash` preserved in indicator `external_references` for chain-of-custody. Backed by `stix2>=3.0`; 5 standalone tests in `apohara-aegis/tests/test_stix_export.py`.
+
 ### Added — Fusion Sprint Tier-1: PLAYBOOK SOAR features (2026-05-18, US-71 → US-80)
 
 Ten new inline modules under `apohara_aegis/` (no `v2/` subdir per
