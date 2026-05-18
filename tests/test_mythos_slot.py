@@ -128,10 +128,18 @@ def test_mythos_registered_in_make_default_adapters():
     assert "mythos-glasswing" in names
 
 
-def test_make_default_adapters_has_eleven_seats():
-    """make_default_adapters() must return exactly 11 seats (10 prior + Mythos)."""
+def test_make_default_adapters_has_fourteen_seats():
+    """make_default_adapters() returns 14 seats: 13 frontier + Mythos reserved.
+
+    Day-4 shipped the 10-seat canonical ensemble. Phase-3 priority A
+    (ad228bf/fce5db8, 2026-05-18) appended Mistral Large 2411, Grok-2
+    1212, and Perplexity Sonar Large 128k Online for 13 frontier seats.
+    US-78 (this commit, post-rebase) adds the Mythos reserved slot at
+    index 13, bringing the total to 14. Mythos is INACTIVE in production
+    until Glasswing / Claude-for-OS approval.
+    """
     adapters = make_default_adapters()
-    assert len(adapters) == 11
+    assert len(adapters) == 14
 
 
 # ---------------------------------------------------------------------------
