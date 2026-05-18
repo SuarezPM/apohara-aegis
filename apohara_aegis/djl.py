@@ -667,6 +667,156 @@ _RULES_POLICY: list[DjlRule] = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# HARMFUL CONTENT — added 2026-05-18 after Pablo's live-judge-test gap:
+# DJL allowed "COMO HACER COCAINA + ROBAR DATOS" because no rule matched.
+# Bilingual (EN+ES) coverage for drugs / weapons / violence / illegal hacking /
+# generic data theft / hate / self-harm / extremism / CSAM-adjacent patterns.
+# OWASP LLM 2026 LLM01 (Prompt Injection) is already covered by the
+# prompt_injection category; this category covers LLM06 (Excessive Agency)
+# adjacent harmful-output requests + EU AI Act Annex III prohibited content.
+# ---------------------------------------------------------------------------
+_RULES_HARM: list[DjlRule] = [
+    DjlRule(
+        id="DJL-HARM-001",
+        # Drug synthesis instructions — EN
+        pattern=re.compile(r"\b(?:how\s+to\s+(?:make|synth(?:esi[sz]e)?|cook|manufacture|produce)|step[s]?\s+to\s+(?:make|synth)|recipe\s+for)\s+(?:meth(?:amphetamine)?|cocaine|crack|heroin|fentanyl|lsd|mdma|ecstasy|crystal|amphetamine|opioid|opium)\b", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Drug synthesis instructions (EN). EU AI Act Annex III prohibited content.",
+        references=["EU-AI-ACT-ANNEX-III", "OWASP-LLM-2026-LLM06"],
+    ),
+    DjlRule(
+        id="DJL-HARM-002",
+        # Drug synthesis instructions — ES
+        pattern=re.compile(r"\b(?:c[oó]mo\s+(?:hacer|fabricar|sintetizar|cocinar|preparar|elaborar|producir)|pasos?\s+para\s+(?:hacer|fabricar)|receta\s+(?:de|para))\s+(?:coca[ií]na|crack|hero[ií]na|metanfetamina|fentanilo|[eé]xtasis|cristal|anfetamina|opi[oó]?ide|droga[s]?)\b", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Drug synthesis instructions (ES). EU AI Act Annex III prohibited content.",
+        references=["EU-AI-ACT-ANNEX-III", "OWASP-LLM-2026-LLM06"],
+    ),
+    DjlRule(
+        id="DJL-HARM-003",
+        # Weapons / explosives instructions — EN
+        # Negative-lookahead `(?![\w\-])` after the target prevents "IED-themed
+        # costume" / "bomb-themed party" from tripping the rule; the target word
+        # must be standalone (no hyphenated suffix, no continuation).
+        pattern=re.compile(r"\b(?:how\s+to\s+(?:make|build|assemble|construct)|step[s]?\s+to\s+(?:make|build|assemble)|recipe\s+for|instructions?\s+for)\s+(?:a\s+|an\s+)?(?:bomb|explosive|ied|pipe[\s\-]?bomb|nail[\s\-]?bomb|nerve\s+agent|chemical\s+weapon|biological\s+weapon|firearm|untraceable\s+(?:gun|weapon)|ghost\s+gun|silencer|suppressor)(?![\w\-])", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Weapons / explosives assembly instructions (EN).",
+        references=["EU-AI-ACT-ANNEX-III", "OWASP-LLM-2026-LLM06"],
+    ),
+    DjlRule(
+        id="DJL-HARM-004",
+        # Weapons / explosives instructions — ES
+        pattern=re.compile(r"\b(?:c[oó]mo\s+(?:hacer|fabricar|construir|armar|ensamblar)|pasos?\s+para\s+(?:hacer|fabricar|construir)|receta\s+(?:de|para))\s+(?:una\s+|un\s+)?(?:bomba|explosivo|artefacto|arma\s+(?:qu[ií]mica|biol[oó]gica|de\s+fuego|sin\s+licencia)|silenciador|munici[oó]n\s+casera)\b", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Weapons / explosives assembly instructions (ES).",
+        references=["EU-AI-ACT-ANNEX-III", "OWASP-LLM-2026-LLM06"],
+    ),
+    DjlRule(
+        id="DJL-HARM-005",
+        # Violence solicitation — EN.
+        # The optional article (a|an|the|my) MUST be followed by a person noun
+        # — not by an arbitrary word — so "kill the build cache" / "kill the
+        # process" / "stab the document" don't match. Person nouns are also
+        # standalone-acceptable without an article.
+        pattern=re.compile(r"\b(?:how\s+to\s+(?:kill|murder|assassinate|harm|hurt|stab|poison|strangle|torture)|plan\s+(?:to|for)\s+(?:kill|murder|assassinate|attack)|ways?\s+to\s+(?:kill|murder|hurt|harm))\s+(?:(?:a|an|the|my)\s+)?(?:someone|people|person|child|kid|wife|husband|spouse|coworker|neighbor|family|partner|friend|colleague|stranger|victim)\b", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Direct violence solicitation against a person (EN).",
+        references=["EU-AI-ACT-ANNEX-III", "OWASP-LLM-2026-LLM06"],
+    ),
+    DjlRule(
+        id="DJL-HARM-006",
+        # Violence solicitation — ES
+        pattern=re.compile(r"\b(?:c[oó]mo\s+(?:matar|asesinar|herir|da[nñ]ar|envenenar|estrangular|torturar)|plan\s+para\s+(?:matar|asesinar|atacar|herir)|formas?\s+de\s+(?:matar|asesinar|herir))\s+(?:a\s+)?(?:alguien|una?\s+persona|gente|ni[nñ]o|esposa?|c[oó]nyuge|compa[nñ]ero|vecino)\b", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Direct violence solicitation against a person (ES).",
+        references=["EU-AI-ACT-ANNEX-III", "OWASP-LLM-2026-LLM06"],
+    ),
+    DjlRule(
+        id="DJL-HARM-007",
+        # Illegal hacking / unauthorized credential access — EN.
+        # The "how to X" verbs all require an attack-target object so legitimate
+        # security-research framings ("brute-force test our own rate limiter",
+        # "exploit unit test", "infiltrate a Kafka topic for QA") don't trip the
+        # rule. "gain unauthorized access" is intrinsically harmful so it stays
+        # without an object constraint.
+        pattern=re.compile(r"\b(?:how\s+to\s+(?:hack|crack|brute[\s\-]?force|exploit|bypass\s+the\s+login|breach|infiltrate|sql[\s\-]?inject)\s+(?:into\s+|a\s+|an\s+|the\s+|someone(?:'s)?\s+|my\s+ex(?:'s)?\s+|a\s+stranger(?:'s)?\s+)?(?:account|password|credential|database|server|gmail|outlook|facebook|instagram|whatsapp|tiktok|router|wifi|network|system|website|webapp|wallet|2fa|mfa)|(?:crack|steal|brute[\s\-]?force)\s+(?:the\s+)?(?:passwords?|credentials?|2fa|mfa|otp|sessions?)|gain\s+unauthorized\s+access\s+to)\b", re.IGNORECASE),
+        category="harm",
+        severity=9,
+        description="Illegal hacking / unauthorized credential access (EN).",
+        references=["CFAA-18-USC-1030", "OWASP-LLM-2026-LLM06"],
+    ),
+    DjlRule(
+        id="DJL-HARM-008",
+        # Illegal hacking / unauthorized access — ES
+        pattern=re.compile(r"\b(?:c[oó]mo\s+(?:hackear|crackear|romper|vulnerar|infiltrar|penetrar|saltarse|saltar\s+el\s+login)|(?:hackear|crackear|robar|romper)\s+(?:una?\s+)?(?:cuenta|contrase[nñ]a|credencial|2fa|mfa|sesi[oó]n|sistema)|acceso\s+(?:no\s+autorizado|ilegal)\s+a)\b", re.IGNORECASE),
+        category="harm",
+        severity=9,
+        description="Illegal hacking / unauthorized credential access (ES).",
+        references=["CFAA-18-USC-1030", "OWASP-LLM-2026-LLM06"],
+    ),
+    DjlRule(
+        id="DJL-HARM-009",
+        # Generic data theft / unauthorized exfiltration — EN
+        pattern=re.compile(r"\b(?:steal|exfiltrate|siphon|harvest|scrape\s+(?:without\s+permission|illegally))\s+(?:user\s+)?(?:data|information|records|database|personal\s+info|customer\s+data|emails?|contacts?)\b|\bwrite\s+(?:a\s+)?(?:program|script|tool|code)\s+(?:to|that)\s+(?:steal|exfiltrate|siphon|harvest)\b", re.IGNORECASE),
+        category="harm",
+        severity=9,
+        description="Generic data theft / unauthorized exfiltration (EN).",
+        references=["GDPR-32", "OWASP-LLM-2026-LLM02"],
+    ),
+    DjlRule(
+        id="DJL-HARM-010",
+        # Generic data theft / unauthorized exfiltration — ES
+        pattern=re.compile(r"\b(?:robar|extraer|exfiltrar|recopilar\s+sin\s+permiso|recolectar\s+ilegalmente)\s+(?:los\s+|las\s+)?(?:datos|informaci[oó]n|registros?|base\s+de\s+datos|datos?\s+(?:personales?|de\s+usuarios?|de\s+clientes?)|correos?|contactos?)\b|\b(?:crea[rs]?|escrib[ie]r?|hac[ae]r?)\s+(?:un\s+)?(?:programa|script|herramienta|c[oó]digo|app)\s+para\s+(?:robar|extraer|exfiltrar)\b", re.IGNORECASE),
+        category="harm",
+        severity=9,
+        description="Generic data theft / unauthorized exfiltration (ES).",
+        references=["GDPR-32", "OWASP-LLM-2026-LLM02"],
+    ),
+    DjlRule(
+        id="DJL-HARM-011",
+        # Self-harm / suicide instructions — bilingual
+        pattern=re.compile(r"\b(?:how\s+to\s+(?:kill\s+myself|commit\s+suicide|end\s+my\s+life|self[\s\-]?harm)|c[oó]mo\s+(?:suicidarme|matarme|terminar\s+con\s+mi\s+vida|hacerme\s+da[nñ]o)|m[eé]todo\s+para\s+suicid)", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Self-harm / suicide instructions (EN+ES). Requires safety-resource response, not method information.",
+        references=["WHO-SUICIDE-PREVENTION", "EU-AI-ACT-ANNEX-III"],
+    ),
+    DjlRule(
+        id="DJL-HARM-012",
+        # Child exploitation / CSAM-adjacent patterns
+        pattern=re.compile(r"\b(?:sexual|erotic|nude|naked|undress)\s+(?:content|imagery|images?|story|stories|description|fantasy)\s+(?:of|with|featuring|involving)\s+(?:a\s+|the\s+)?(?:child|children|minor[s]?|kid[s]?|underage|teen(?:ager)?|infant)\b|\b(?:csam|child\s+(?:porn|sexual))\b", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Child sexual content (CSAM-adjacent). Mandatory report to NCMEC; non-negotiable BLOCK.",
+        references=["NCMEC", "EU-AI-ACT-ANNEX-III", "18-USC-2256"],
+    ),
+    DjlRule(
+        id="DJL-HARM-013",
+        # Terrorism / extremism recruitment / glorification — bilingual
+        pattern=re.compile(r"\b(?:how\s+to\s+(?:join|recruit\s+for)|c[oó]mo\s+(?:unirme|reclutar)\s+a)\s+(?:isis|al[\s\-]?qaeda|hamas|hezbollah|boko\s+haram|talib[aá]n|estado\s+isl[aá]mico|a\s+terrorist\s+(?:cell|organization|group)|una?\s+(?:c[eé]lula|organizaci[oó]n)\s+terrorista)\b|\b(?:plan(?:ning)?|planeando)\s+(?:a\s+|an\s+|un\s+)?(?:terrorist\s+attack|atentado|ataque\s+terrorista)\b", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Terrorism recruitment / attack planning (EN+ES).",
+        references=["EU-AI-ACT-ANNEX-III", "18-USC-2339B"],
+    ),
+    DjlRule(
+        id="DJL-HARM-014",
+        # Hate speech against protected class — bilingual
+        pattern=re.compile(r"\b(?:write|create|generate|draft|escrib[ie]r?|crea[rs]?|genera[rs]?)\s+(?:a\s+|an\s+|un\s+|una\s+)?(?:hateful|racist|antisemitic|xenophobic|islamophobic|homophobic|transphobic|misogynist(?:ic)?|racista|antisemita|xen[oó]fobo|hom[oó]fobo|tr[aá]nsfobo|mis[oó]gino)\s+(?:rant|manifesto|post|message|content|discurso|manifiesto|publicaci[oó]n|mensaje|contenido)\b", re.IGNORECASE),
+        category="harm",
+        severity=9,
+        description="Hate-speech generation against protected class (EN+ES). EU AI Act Article 5 + DSA Article 34.",
+        references=["EU-AI-ACT-5", "EU-DSA-34"],
+    ),
+]
+
 
 # Materialised global list — preserves insertion order, frozen at import time
 ALL_RULES: tuple[DjlRule, ...] = tuple(
@@ -677,6 +827,7 @@ ALL_RULES: tuple[DjlRule, ...] = tuple(
     + _RULES_EXFIL
     + _RULES_MISUSE
     + _RULES_POLICY
+    + _RULES_HARM
 )
 
 
