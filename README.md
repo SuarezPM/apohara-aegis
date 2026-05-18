@@ -11,11 +11,11 @@
 <p align="center">
   <em>The defense-in-depth trust layer for multi-agent LLM workflows.</em><br>
   <a href="https://github.com/veeainc/lobstertrap">Veea Lobster Trap</a> at the perimeter ·
-  <a href="https://doi.org/10.5281/zenodo.20114594">Apohara INV-15</a> at the behavioral layer.
+  <a href="https://doi.org/10.5281/zenodo.20277875">Apohara INV-15</a> at the behavioral layer.
 </p>
 
 <p align="center">
-  <a href="https://doi.org/10.5281/zenodo.20114594"><img src="https://img.shields.io/badge/Paper%20DOI-10.5281%2Fzenodo.20114594-1A73E8?style=flat-square&logo=doi&logoColor=white"></a>
+  <a href="https://doi.org/10.5281/zenodo.20277875"><img src="https://img.shields.io/badge/Paper%20DOI-10.5281%2Fzenodo.20277875-1A73E8?style=flat-square&logo=doi&logoColor=white"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-2ECC71.svg?style=flat-square"></a>
   <a href="https://github.com/veeainc/lobstertrap"><img src="https://img.shields.io/badge/depends%20on-Lobster%20Trap%20(MIT)-FF6B00.svg?style=flat-square"></a>
   <a href="https://jailbreakbench.github.io/"><img src="https://img.shields.io/badge/benchmark-JailbreakBench%20(NeurIPS%202024)-8B5CF6.svg?style=flat-square"></a>
@@ -341,7 +341,7 @@ If you're reviewing this submission and have limited time:
    | `4 / 4` | live integration tests PASS against running Lobster Trap |
    | `Δ 0.23` | JCR drop *prevented* under naive KV reuse (Liang et al. range: 0.08–0.23) |
 
-2. **The paper with permanent DOI** (peer-reviewable evidence): [Zenodo 10.5281/zenodo.20114594](https://doi.org/10.5281/zenodo.20114594) — v2.0.1 IEEE format, 12 references, MI300X-grounded. Published as upstream [Apohara Context Forge](https://github.com/SuarezPM/Apohara_Context_Forge).
+2. **The paper with permanent DOI** (peer-reviewable evidence): [Zenodo 10.5281/zenodo.20277875](https://doi.org/10.5281/zenodo.20277875) — v2.0.1 IEEE format, 12 references, MI300X-grounded. Published as upstream [Apohara Context Forge](https://github.com/SuarezPM/Apohara_Context_Forge).
 
 3. **The threat model** (Track 1 scoring requirement): [`docs/threat-model.md`](docs/threat-model.md) — 7 sections, NIST AI RMF + EU AI Act + ISO/IEC 42001 mapping, 6 acknowledged unknowns, 14-row layer-by-layer mitigation matrix.
 

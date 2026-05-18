@@ -41,7 +41,7 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/SuarezPM/apohara-aegis"
 "Upstream engine (Apohara Context Forge)" = "https://github.com/SuarezPM/Apohara_Context_Forge"
-"Paper (Zenodo DOI)" = "https://doi.org/10.5281/zenodo.20114594"
+"Paper (Zenodo DOI)" = "https://doi.org/10.5281/zenodo.20277875"
 "Lobster Trap (Veea)" = "https://github.com/veeainc/lobstertrap"
 
 [project.optional-dependencies]

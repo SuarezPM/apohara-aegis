@@ -32,7 +32,7 @@ google-genai>=2.0,<3
 #   not a pip dependency. See docs/lobstertrap-integration.md for setup.
 # - The underlying INV-15 invariant + paper are published in Apohara Context
 #   Forge (github.com/SuarezPM/Apohara_Context_Forge,
-#   Zenodo DOI 10.5281/zenodo.20114594). This repo is the applied policy
+#   Zenodo DOI 10.5281/zenodo.20277875). This repo is the applied policy
 #   layer that wraps that engine.
 # - smolagents (HuggingFace) is an OPTIONAL extra for Innovation E:
 #       pip install 'apohara-aegis[smolagents]'

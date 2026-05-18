@@ -1,16 +1,16 @@
 {
-  "p50_ms": 0.0612,
-  "p95_ms": 0.0732,
-  "p99_ms": 0.0911,
+  "p50_ms": 0.0824,
+  "p95_ms": 0.108,
+  "p99_ms": 0.1345,
   "iterations": 1000,
-  "corpus_size": 124,
+  "corpus_size": 152,
   "wilson_ci_95_accuracy": [
     0.9962,
     1.0
   ],
   "true_positive_rate": 1.0,
   "true_negative_rate": 1.0,
-  "ts": "2026-05-18T22:17:59.574377+00:00",
-  "rule_count": 62,
+  "ts": "2026-05-18T23:31:36.955405+00:00",
+  "rule_count": 76,
   "budget_ms_used": 5.0
 }

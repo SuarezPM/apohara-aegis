@@ -32,7 +32,7 @@ style: |
 
 Built on AMD Instinct MI300X · Apache-2.0 + MIT · Solo dev · UNT, Argentina
 
-Paper v2.0.1 · Zenodo DOI 10.5281/zenodo.20114594
+Paper v2.0.1 · Zenodo DOI 10.5281/zenodo.20277875
 
 <small>5 slides · ~3 minute pitch · TechEx 2026</small>
 
@@ -156,4 +156,4 @@ JCR drop *prevented*
 
 **The ask:** Veea Award ($10K + DevKit + Stage Recognition) + Gemini Award ($5K). Both flow into V8 codec validation + V2.1 paper.
 
-<small>github.com/SuarezPM/apohara-aegis · Apache-2.0 · DOI 10.5281/zenodo.20114594</small>
+<small>github.com/SuarezPM/apohara-aegis · Apache-2.0 · DOI 10.5281/zenodo.20277875</small>
