@@ -815,6 +815,35 @@ _RULES_HARM: list[DjlRule] = [
         description="Hate-speech generation against protected class (EN+ES). EU AI Act Article 5 + DSA Article 34.",
         references=["EU-AI-ACT-5", "EU-DSA-34"],
     ),
+    DjlRule(
+        id="DJL-HARM-015",
+        # Generic credential/data stealer-app request (EN). Covers Pablo's
+        # TechEx-eve live prompt "make a app to steels passwords":
+        # build/write/create/develop + (app|program|script|tool|malware|trojan|
+        # keylogger|...) + to/that + steal/grab/harvest/exfiltrate/capture/
+        # sniff/crack + (passwords|credentials|tokens|sessions|cookies|wallets|
+        # api keys|user data|customer data|...).
+        # Typo-tolerant: matches both "steal" and "steel" (Pablo's literal
+        # input was "steels"). Negative-flank: "password manager app" / "store
+        # passwords securely" / "backup customer data" don't match because the
+        # malware-target noun must precede the steal verb.
+        pattern=re.compile(r"\b(?:make|build|create|develop|write|code|design|generate)\s+(?:a|an|the|some)?\s*(?:program|app(?:lication)?|script|tool|software|utility|malware|virus|trojan|backdoor|keylogger|spyware|stealer|grabber|extension|bot|exploit|payload)s?\s+(?:to|that|which|for|capable\s+of)\s+(?:steal|steel|grab|harvest|extract|exfiltrate|siphon|capture|sniff|intercept|crack|brute[\s\-]?force|phish|skim|dump)s?\s+(?:[\w\-]+\s+){0,4}?(?:passwords?|credentials?|tokens?|api[\s\-]?keys?|accounts?|sessions?|cookies?|cards?|wallets?|seed[\s\-]?phrases?|private[\s\-]?keys?|2fa|mfa|otps?|personal\s+(?:data|info(?:rmation)?)|user\s+(?:data|info(?:rmation)?)|customer\s+(?:data|info(?:rmation)?)|emails?|contacts?|database)\b", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Malware app/script/tool synthesis request targeting credentials/data (EN).",
+        references=["CFAA-18-USC-1030", "OWASP-LLM-2026-LLM06"],
+    ),
+    DjlRule(
+        id="DJL-HARM-016",
+        # Spanish variant of HARM-015.
+        # Negative-flank: "crear un gestor de contraseñas" / "guardar datos
+        # de clientes" don't match.
+        pattern=re.compile(r"\b(?:hac[ae]r?|crea[rs]?|construi[rs]?|desarrolla[rs]?|escrib[ie]r?|programa[rs]?|disen[aã]r?|dise[nñ]a[rs]?)\s+(?:un|una|el|la|alg[uú]n|alguna)?\s*(?:programa|app|aplicaci[oó]n|script|herramienta|software|utilidad|malware|virus|troyano|backdoor|keylogger|spyware|extensi[oó]n|bot|exploit)s?\s+(?:para|que|capaz\s+de)\s+(?:roba[rs]?|extrae[rs]?|exfiltra[rs]?|captura[rs]?|interceptar?|crackear?|hackear?|sniffea[rs]?|sustrae[rs]?)\s+(?:[\w\-]+\s+){0,4}?(?:contrase[nñ]as?|credenciales?|tokens?|claves?\s+api|cuentas?|sesion(?:es)?|cookies?|tarjetas?|wallets?|frases?\s+semilla|claves?\s+privadas?|2fa|mfa|datos?\s+(?:personales?|de\s+usuarios?|de\s+clientes?)|correos?|contactos?|bases?\s+de\s+datos)\b", re.IGNORECASE),
+        category="harm",
+        severity=10,
+        description="Malware app/script/tool synthesis request targeting credentials/data (ES).",
+        references=["CFAA-18-USC-1030", "OWASP-LLM-2026-LLM06"],
+    ),
 ]
 
 
