@@ -38,10 +38,10 @@ export AEGIS_SSH_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)"
 # at first boot; it never lives in any repo file.
 export GEMINI_API_KEY='<your-AI-Studio-key>'
 
-# Optional: judge basicauth credentials. Defaults to
-# user=judge / password=apohara-aegis-techex-2026 if unset.
-# export AEGIS_JUDGE_USER='judge'
-# export AEGIS_JUDGE_PASS_HASH="$(docker run --rm caddy:2.8 caddy hash-password --plaintext 'your-password')"
+# Required at deploy time: judge basicauth credentials.
+# export AEGIS_JUDGE_USER='<your-user>'
+# export AEGIS_JUDGE_PASS_HASH="$(docker run --rm caddy:2.8 caddy hash-password --plaintext '<your-password>')"
+# See "Security posture" below for defaults and rationale.
 
 python3 deploy/vultr_provision.py
 ```
@@ -139,7 +139,7 @@ tracked in `AUDIT.md` entry #7.
 | ------- | ---- | ----- |
 | SSH key-only login | `disable_root: true`, `ssh_pwauth: false`, a non-root sudoer `aegis` carrying a single pubkey read from `AEGIS_SSH_PUBKEY` at provision time. Provisioner aborts BEFORE the Vultr API call if the env var is unset (no silent fallback to root + password). | `cloud-init.yaml`, `vultr_provision.py::load_user_data` |
 | Non-root containers | `user: "65532:65532"` on `mock-llm` and `aegis-ui` (lobstertrap is already distroless-nonroot upstream). `aegis-ui` writes Python deps to a tmpfs `PYTHONUSERBASE` and logs to a host dir chmod-1777 by cloud-init. | `docker-compose.yml`, `cloud-init.yaml` |
-| Judge basicauth | Caddy `basic_auth` on `/` and `/lt/*`. `/audit` (static governance dashboard) stays public. Credentials default to `judge` / `apohara-aegis-techex-2026`; override via `AEGIS_JUDGE_USER` + `AEGIS_JUDGE_PASS_HASH` env vars at provision time. | `Caddyfile`, `docker-compose.yml::caddy.environment` |
+| Judge basicauth | Caddy `basic_auth` on `/` and `/lt/*`. `/audit` (static governance dashboard) stays public. Credentials are env-driven (`AEGIS_JUDGE_USER` + `AEGIS_JUDGE_PASS_HASH`); see "Security posture" below for the deploy contract. | `Caddyfile`, `docker-compose.yml::caddy.environment` |
 
 Override path (judge basicauth password):
 
